@@ -1,0 +1,229 @@
+// Swasthya HRMS — Phase 0 schema
+//
+// Entity conventions (docs/architecture.md):
+//   - Every major entity: id, tenantId, organizationId, status, createdAt/By,
+//     updatedAt/By, version.
+//   - Effective-dated entities additionally carry effectiveFrom/effectiveTo.
+//   - Legally/policy-significant entities additionally carry jurisdiction,
+//     source, sourceReference, approvedAt/By (added when those domains land).
+//   - Sensitive records carry classification/accessPolicy/retentionPolicy.
+//
+// Classification enum values reference docs/compliance/privacy.md. No
+// jurisdiction-specific law is encoded here — rules live in versioned
+// jurisdiction rule tables (later phases).
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ── Enumerations ─────────────────────────────────────────────────────────────
+
+enum DataClassification {
+  PUBLIC
+  INTERNAL
+  PERSONAL
+  SENSITIVE_PERSONAL
+  EMPLOYMENT
+  HEALTH_OCCUPATIONAL
+  CREDENTIAL
+}
+
+enum UserStatus {
+  INVITED
+  ACTIVE
+  SUSPENDED
+  DEACTIVATED
+  LOCKED
+}
+
+enum OrganizationStatus {
+  ACTIVE
+  INACTIVE
+  ARCHIVED
+}
+
+enum AuthEventAction {
+  LOGIN_SUCCESS
+  LOGIN_FAILURE
+  LOGIN_RATE_LIMITED
+  LOGOUT
+  SESSION_EXPIRED
+  PASSWORD_CHANGE
+  MFA_ENROLLED
+  MFA_DISABLED
+  ACCOUNT_LOCKED
+  ACCOUNT_UNLOCKED
+}
+
+// ── Core shared model ────────────────────────────────────────────────────────
+
+/// Tenant = customer deployment scope (hospital group). All business data is
+/// tenant-scoped. Enforced at application layer via tenant guards; revisit at
+/// scale per ADR-002.
+model Tenant {
+  id          String   @id @default(cuid())
+  slug        String   @unique
+  name        String
+  status      String   @default("ACTIVE")
+  createdAt   DateTime @default(now())
+  createdBy   String?
+  updatedAt   DateTime @default(now()) @updatedAt
+  updatedBy   String?
+  version     Int      @default(1)
+
+  organizations Organization[]
+  users         User[]
+
+  @@map("tenants")
+}
+
+/// Organization = legal entity operating healthcare facilities.
+model Organization {
+  id          String   @id @default(cuid())
+  tenantId    String
+  name        String
+  code        String
+  status      String   @default("ACTIVE")
+  // Effective dating from Phase 0 (org records are legally significant)
+  effectiveFrom DateTime @default(now())
+  effectiveTo   DateTime?
+  createdAt   DateTime @default(now())
+  createdBy   String?
+  updatedAt   DateTime @default(now()) @updatedAt
+  updatedBy   String?
+  version     Int      @default(1)
+
+  tenant Tenant @relation(fields: [tenantId], references: [id])
+
+  users User[]
+
+  @@unique([tenantId, code])
+  @@map("organizations")
+}
+
+// ── Identity (Phase 1 domain; minimal Phase 0 slice) ─────────────────────────
+
+model User {
+  id             String     @id @default(cuid())
+  tenantId       String
+  organizationId String?
+  email          String
+  passwordHash   String? // bcrypt; null until first credential set (invited)
+  name           String
+  status         UserStatus @default(INVITED)
+  systemRole     String @default("SYSTEM_ROLE_EMPLOYEE") // SYSTEM_ROLE_* constants (src/lib/auth/rbac.ts)
+  failedLoginAttempts Int    @default(0)
+  lockedUntil    DateTime?
+  lastLoginAt    DateTime?
+  passwordChangedAt DateTime?
+
+  // Reserved for Phase 1 MFA (ADR-003). Never remove columns; add additively.
+  mfaEnabled     Boolean    @default(false)
+  mfaSecret      String?    // encrypted at rest by application layer, never logged
+  mfaEnrolledAt  DateTime?
+
+  createdAt DateTime @default(now())
+  createdBy String?
+  updatedAt DateTime @default(now()) @updatedAt
+  updatedBy String?
+  version   Int      @default(1)
+
+  tenant       Tenant       @relation(fields: [tenantId], references: [id])
+  organization Organization? @relation(fields: [organizationId], references: [id])
+  sessions     Session[]
+  auditEvents  AuditEvent[] @relation("AuditActor")
+  accessScopes UserAccessScope[]
+
+  @@unique([tenantId, email])
+  @@index([status])
+  @@map("users")
+}
+
+/// Database-backed session (server-side revocable; ADR-003).
+model Session {
+  id         String   @id @default(cuid())
+  userId     String
+  tokenHash  String   @unique // sha-256 of session token; raw token never stored
+  expiresAt  DateTime
+  createdAt  DateTime @default(now())
+  createdBy  String?
+  ip         String? // truncation policy: docs/compliance/privacy.md
+  userAgent  String?
+  revokedAt  DateTime?
+  revokedBy  String?
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+  @@index([expiresAt])
+  @@map("sessions")
+}
+
+/// Row-level data scope grants (ABAC complement to role constants; ADR-003).
+/// Branch/facility scoping arrives with the org domain; the shape is stable.
+model UserAccessScope {
+  id        String   @id @default(cuid())
+  userId    String
+  scopeType String // e.g. ORGANIZATION, BRANCH, DEPARTMENT, PAYROLL
+  scopeId   String
+  grantedAt DateTime @default(now())
+  grantedBy String?
+  revokedAt DateTime?
+  revokedBy String?
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@unique([userId, scopeType, scopeId])
+  @@map("user_access_scopes")
+}
+
+// ── Audit (ADR-005) — append-only ────────────────────────────────────────────
+
+/// Append-only audit trail. Application code must never UPDATE or DELETE rows.
+/// DB role restrictions for enforcement are documented in ADR-005.
+model AuditEvent {
+  id          String   @id @default(cuid())
+  tenantId    String?
+  actorUserId String?
+  actorEmail  String? // denormalized: survives user deletion workflows
+  action      String // namespaced, e.g. "auth.login.success"
+  resourceType String
+  resourceId  String?
+  before      Json?
+  after       Json?
+  requestId   String?
+  ip          String?
+  userAgent   String?
+  occurredAt  DateTime @default(now())
+
+  actor User? @relation("AuditActor", fields: [actorUserId], references: [id])
+
+  @@index([tenantId, occurredAt])
+  @@index([actorUserId, occurredAt])
+  @@index([resourceType, resourceId])
+  @@map("audit_events")
+}
+
+/// Structured security/auth event log (separate from business audit; ADR-005).
+model AuthEvent {
+  id         String          @id @default(cuid())
+  userId     String?
+  email      String? // attempted identity; privacy-aware (see docs)
+  action     AuthEventAction
+  success    Boolean
+  requestId  String?
+  ip         String?
+  userAgent  String?
+  detail     Json?
+  occurredAt DateTime        @default(now())
+
+  @@index([userId, occurredAt])
+  @@index([email, occurredAt])
+  @@index([action, occurredAt])
+  @@map("auth_events")
+}

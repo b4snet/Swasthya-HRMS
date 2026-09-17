@@ -1,0 +1,50 @@
+# Dependencies
+node_modules/
+.pnpm-store/
+
+# Next.js
+.next/
+out/
+next-env.d.ts
+
+# Build / tooling caches
+.turbo/
+tsconfig.tsbuildinfo
+*.tsbuildinfo
+coverage/
+.vitest-cache/
+
+# Environment & secrets — NEVER commit real values
+.env
+.env.*
+!.env.example
+
+# Generated credentials / keys / certificates
+*.pem
+*.key
+*.p12
+*.pfx
+*.jks
+secrets/
+credentials/
+*.crt
+
+# Databases
+*.sqlite
+*.db
+docker-data/
+data/db/
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+pnpm-debug.log*
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json

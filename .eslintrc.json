@@ -1,0 +1,24 @@
+{
+  "extends": ["next/core-web-vitals", "next/typescript"],
+  "rules": {
+    "@typescript-eslint/no-unused-vars": [
+      "error",
+      { "argsIgnorePattern": "^_", "varsIgnorePattern": "^_" }
+    ],
+    "no-restricted-imports": [
+      "error",
+      {
+        "patterns": [
+          {
+            "group": ["@/app/*"],
+            "message": "Domain and UI code must not import from route handlers (app layer imports them, not the reverse)."
+          },
+          {
+            "group": ["@/modules/*/api/*"],
+            "message": "Import domain services, not route modules."
+          }
+        ]
+      }
+    ]
+  }
+}
