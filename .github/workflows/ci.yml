@@ -91,7 +91,7 @@ jobs:
       # Assert the expected tables actually exist before seeding.
       - name: Assert migrations created schema
         run: |
-          cat <<'SQL' | pnpm exec prisma db execute --stdin
+          cat > /tmp/schema-guard.sql <<'SQL'
           DO $$ BEGIN
             IF to_regclass('public.tenants') IS NULL
                OR to_regclass('public.organizations') IS NULL
@@ -104,6 +104,7 @@ jobs:
             END IF;
           END $$;
           SQL
+          pnpm exec prisma db execute --file /tmp/schema-guard.sql --schema prisma/schema.prisma
         env:
           DATABASE_URL: postgresql://ci:ci@localhost:5432/ci
 
