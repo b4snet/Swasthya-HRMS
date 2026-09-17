@@ -87,7 +87,28 @@ jobs:
         env:
           DATABASE_URL: postgresql://ci:ci@localhost:5432/ci
 
+      # Guard: `prisma migrate deploy` silently succeeds with zero migrations.
+      # Assert the expected tables actually exist before seeding.
+      - name: Assert migrations created schema
+        run: |
+          cat <<'SQL' | pnpm exec prisma db execute --stdin
+          DO $$ BEGIN
+            IF to_regclass('public.tenants') IS NULL
+               OR to_regclass('public.organizations') IS NULL
+               OR to_regclass('public.users') IS NULL
+               OR to_regclass('public.sessions') IS NULL
+               OR to_regclass('public.user_access_scopes') IS NULL
+               OR to_regclass('public.audit_events') IS NULL
+               OR to_regclass('public.auth_events') IS NULL THEN
+              RAISE EXCEPTION 'migrations did not create expected tables';
+            END IF;
+          END $$;
+          SQL
+        env:
+          DATABASE_URL: postgresql://ci:ci@localhost:5432/ci
+
       - name: Verify seed runs
         run: pnpm db:seed
         env:
           DATABASE_URL: postgresql://ci:ci@localhost:5432/ci
+          CI: "true" # suppress credential output in logs (see prisma/seed.ts)

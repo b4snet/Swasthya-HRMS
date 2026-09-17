@@ -87,19 +87,28 @@ async function main() {
     },
   });
 
+  // SECURITY: never print generated credentials in CI — GitHub Actions logs
+  // are readable by anyone with repo read access.
+  const showSecrets = process.env.CI !== "true";
   console.log("──────────────────────────────────────────────────────");
   console.log(" Phase 0 seed complete.");
   console.log(` Tenant: ${tenant.slug}   Organization: ${organization.code}`);
-  console.log("");
-  console.log(` Admin:    ${adminEmail}`);
-  console.log(` Password: ${adminPassword}`);
-  console.log("");
-  console.log(` Employee: ${staffEmail}`);
-  console.log(` Password: ${staffPassword}`);
-  console.log("");
-  console.log(" ⚠  These passwords are shown ONCE and are not stored in");
-  console.log("    plaintext anywhere. Copy them now into your password");
-  console.log("    manager. Use `pnpm db:reset && pnpm db:seed` to rotate.");
+  if (showSecrets) {
+    console.log("");
+    console.log(` Admin:    ${adminEmail}`);
+    console.log(` Password: ${adminPassword}`);
+    console.log("");
+    console.log(` Employee: ${staffEmail}`);
+    console.log(` Password: ${staffPassword}`);
+    console.log("");
+    console.log(" ⚠  These passwords are shown ONCE and are not stored in");
+    console.log("    plaintext anywhere. Copy them now into your password");
+    console.log("    manager. Use `pnpm db:reset && pnpm db:seed` to rotate.");
+  } else {
+    console.log("");
+    console.log(" CI mode: bootstrap passwords are NOT printed. To obtain");
+    console.log(" credentials, run the seed locally: pnpm db:reset && pnpm db:seed");
+  }
   console.log("──────────────────────────────────────────────────────");
 }
 
