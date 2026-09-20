@@ -21,13 +21,8 @@ import { writeAuditEvent, type RequestAuditContext } from "@/lib/audit";
 import type { WorkforceSubject } from "./types";
 import {
   WorkforceAppError,
-  toWorkforceAppError,
-  type WorkforceAppErrorCode,
+  toWorkforceServiceError,
 } from "./app-errors";
-import {
-  WorkflowsAppError,
-  type WorkflowsAppErrorCode,
-} from "@/modules/workflows/service/app-errors";
 import { assertCallerCanManageEmployees } from "./mutations";
 import { accessibleOrganizationIds } from "@/lib/auth/scopes";
 import { changeEmploymentStatus } from "./employee-service";
@@ -123,33 +118,6 @@ function effectData(input: RequestSeparationInput | ApplySeparationInput) {
   };
 }
 
-const WORKFLOWS_CODE_MAP: Partial<Record<WorkflowsAppErrorCode, WorkforceAppErrorCode>> = {
-  VALIDATION_FAILED: "EMPLOYMENT_STATE_INVALID",
-  AUTHORIZATION_DENIED: "AUTHORIZATION_DENIED",
-  NOT_FOUND: "NOT_FOUND",
-  RESOURCE_CONFLICT: "RESOURCE_CONFLICT",
-  STATE_INVALID: "EMPLOYMENT_STATE_INVALID",
-  UNEXPECTED: "UNEXPECTED",
-};
-
-/**
- * Error unification for this cross-context service: workforce errors pass
- * through untouched, workflow-engine errors (createApprovalRequest/createTask/
- * decideApproval) map into the workforce vocabulary so clients always get the
- * stable WorkforceAppError shape.
- */
-function toWorkforceErr(err: unknown): WorkforceAppError {
-  if (err instanceof WorkflowsAppError) {
-    return new WorkforceAppError(
-      WORKFLOWS_CODE_MAP[err.code] ?? "UNEXPECTED",
-      err.message,
-      err.field,
-      err,
-    );
-  }
-  return toWorkforceAppError(err);
-}
-
 /**
  * Request a separation: validated against the lifecycle machine, then raised
  * as an ApprovalRequest (PENDING when an approver is given, else queued
@@ -209,7 +177,7 @@ export async function requestSeparation(
 
     return { approvalId: approval.id, status: approval.status };
   } catch (err) {
-    throw toWorkforceErr(err);
+    throw toWorkforceServiceError(err);
   }
 }
 
@@ -329,7 +297,7 @@ export async function applySeparation(
       clearanceTaskIds,
     };
   } catch (err) {
-    throw toWorkforceErr(err);
+    throw toWorkforceServiceError(err);
   }
 }
 
@@ -374,7 +342,7 @@ export async function listSeparationRequests(
         : pending.filter((a) => a.organizationId && reach.includes(a.organizationId));
     return separationQueue.filter((a) => isSeparationRequestType(a.requestType));
   } catch (err) {
-    throw toWorkforceErr(err);
+    throw toWorkforceServiceError(err);
   }
 }
 
@@ -393,6 +361,6 @@ export async function decideSeparation(
     });
     return approval;
   } catch (err) {
-    throw toWorkforceErr(err);
+    throw toWorkforceServiceError(err);
   }
 }

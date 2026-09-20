@@ -7,6 +7,7 @@
  * known Prisma failures are mapped so services throw exactly one shape.
  */
 import { WorkforceDomainError } from "../domain/errors";
+import { WorkflowsAppError, type WorkflowsAppErrorCode } from "@/modules/workflows/service/app-errors";
 
 export type WorkforceAppErrorCode =
   | "VALIDATION_FAILED"
@@ -125,4 +126,30 @@ export function serializeWorkforceAppError(err: WorkforceAppError): {
   field?: string;
 } {
   return { code: err.code, message: err.message, field: err.field };
+}
+
+/**
+ * Maps workflow-engine errors into the workforce vocabulary so clients always
+ * receive the stable WorkforceAppError shape. Used by cross-context services
+ * (separation, renewal bindings) that orchestrate the shared primitives.
+ */
+const WORKFLOWS_CODE_MAP: Partial<Record<WorkflowsAppErrorCode, WorkforceAppErrorCode>> = {
+  VALIDATION_FAILED: "EMPLOYMENT_STATE_INVALID",
+  AUTHORIZATION_DENIED: "AUTHORIZATION_DENIED",
+  NOT_FOUND: "NOT_FOUND",
+  RESOURCE_CONFLICT: "RESOURCE_CONFLICT",
+  STATE_INVALID: "EMPLOYMENT_STATE_INVALID",
+  UNEXPECTED: "UNEXPECTED",
+};
+
+export function toWorkforceServiceError(err: unknown): WorkforceAppError {
+  if (err instanceof WorkflowsAppError) {
+    return new WorkforceAppError(
+      WORKFLOWS_CODE_MAP[err.code] ?? "UNEXPECTED",
+      err.message,
+      err.field,
+      err,
+    );
+  }
+  return toWorkforceAppError(err);
 }
