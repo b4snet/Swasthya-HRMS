@@ -1,0 +1,27 @@
+# Swasthya HRMS — Local Development Databases
+# Usage:  docker compose up -d
+# The postgres service initializes schema/user from docker/postgres/init.sql
+# which matches the default DATABASE_URL in .env.example.
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: swasthya-hrms-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: swasthya_hrms
+      POSTGRES_USER: swasthya_dev
+      # Local dev only. Override in your own shell/env for anything shared.
+      POSTGRES_PASSWORD: CHANGE_ME_BEFORE_USE
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./docker/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U swasthya_dev -d swasthya_hrms"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  pgdata:

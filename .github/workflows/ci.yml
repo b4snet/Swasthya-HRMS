@@ -1,0 +1,241 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Unit tests
+        run: pnpm test
+
+      - name: Prisma validate
+        run: pnpm db:validate
+        env:
+          DATABASE_URL: postgresql://ci:ci@localhost:5432/ci
+
+      - name: Build
+        run: pnpm build
+        env:
+          DATABASE_URL: postgresql://ci:ci@localhost:5432/ci
+          AUTH_SECRET: ci-only-secret-value-with-at-least-32-chars!!
+
+      - name: Dependency audit (high+)
+        run: pnpm audit --audit-level high
+        continue-on-error: true # advisory until triage process exists (security.md)
+
+  migration-check:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: ci
+          POSTGRES_PASSWORD: ci
+          POSTGRES_DB: ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U ci"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Apply migrations to clean database
+        run: pnpm db:migrate
+        env:
+          DATABASE_URL: postgresql://ci:ci@localhost:5432/ci
+
+      # Guard: `prisma migrate deploy` silently succeeds with zero migrations.
+      # Assert the expected tables actually exist before seeding.
+      - name: Assert migrations created schema
+        run: |
+          cat > /tmp/schema-guard.sql <<'SQL'
+          DO $$ DECLARE t text; missing text := ''; BEGIN
+            FOREACH t IN ARRAY ARRAY[
+              'tenants','organizations','users','sessions','user_access_scopes',
+              'audit_events','auth_events','legal_entities','org_units',
+              'departments','teams','designations','job_families','grades',
+              'cost_centers','locations','facilities','positions','reporting_edges',
+              'persons','identity_documents','employees','employments',
+              'employment_assignments','employee_credentials',
+              'employee_qualifications','employee_emergency_contacts',
+              'employee_dependents','employee_document_references',
+              'contract_templates','contract_template_versions','contracts',
+              'contract_versions','contract_parties','document_types',
+              'documents','document_versions','document_access_grants',
+              'issuing_authorities','credential_type_configs',
+              'credential_verification_records','credential_renewals',
+              'qualification_verification_records'
+            ] LOOP
+              IF to_regclass('public.' || t) IS NULL THEN missing := missing || t || ' '; END IF;
+            END LOOP;
+            IF missing <> '' THEN RAISE EXCEPTION 'migrations missing tables: %', missing; END IF;
+          END $$;
+          SQL
+          pnpm exec prisma db execute --file /tmp/schema-guard.sql --schema prisma/schema.prisma
+        env:
+          DATABASE_URL: postgresql://ci:ci@localhost:5432/ci
+
+      - name: Verify seed runs
+        run: pnpm db:seed
+        env:
+          DATABASE_URL: postgresql://ci:ci@localhost:5432/ci
+          CI: "true" # suppress credential output in logs (see prisma/seed.ts)
+
+  integration-check:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: ci
+          POSTGRES_PASSWORD: ci
+          POSTGRES_DB: ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U ci"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Apply migrations
+        run: pnpm db:migrate
+        env:
+          DATABASE_URL: postgresql://ci:ci@localhost:5432/ci
+
+      - name: Integration tests (organization services)
+        run: pnpm test:integration
+        env:
+          DATABASE_URL: postgresql://ci:ci@localhost:5432/job
+          AUTH_SECRET: ci-only-secret-value-with-at-least-32-chars!!
+
+  e2e-check:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: ci
+          POSTGRES_PASSWORD: ci
+          POSTGRES_DB: ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U ci"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Install Playwright browser
+        run: pnpm exec playwright install --with-deps chromium
+
+      - name: Apply migrations
+        run: pnpm db:migrate
+        env:
+          DATABASE_URL: postgresql://ci:ci@localhost:5432/ci
+
+      # Generate a per-run random bootstrap password for the seeded admin
+      # and pass it to both the seed script and the E2E job via environment.
+      # It is never committed, never printed (CI suppresses credential output).
+      - name: Provision CI-only seed credentials
+        run: |
+          echo "E2E_ADMIN_EMAIL=admin@swasthya-pilot.local" >> "$GITHUB_ENV"
+          echo "E2E_ADMIN_PASSWORD=$(node -e 'console.log(require("node:crypto").randomBytes(24).toString("base64url"))')" >> "$GITHUB_ENV"
+          echo "E2E_EMPLOYEE_EMAIL=employee@swasthya-pilot.local" >> "$GITHUB_ENV"
+          echo "E2E_EMPLOYEE_PASSWORD=$(node -e 'console.log(require("node:crypto").randomBytes(24).toString("base64url"))')" >> "$GITHUB_ENV"
+
+      - name: Seed database
+        run: pnpm db:seed
+        env:
+          DATABASE_URL: postgresql://ci:ci@localhost:5432/ci
+          CI: "true"
+          SEED_CI_ADMIN_PASSWORD: ${{ env.E2E_ADMIN_PASSWORD }}
+          SEED_CI_EMPLOYEE_PASSWORD: ${{ env.E2E_EMPLOYEE_PASSWORD }}
+
+      - name: Build
+        run: pnpm build
+        env:
+          DATABASE_URL: postgresql://ci:ci@localhost:5432/ci
+          AUTH_SECRET: ci-only-secret-value-with-at-least-32-chars!!
+
+      - name: Run E2E journeys
+        run: pnpm test:e2e
+        env:
+          DATABASE_URL: postgresql://ci:ci@localhost:5432/ci
+          AUTH_SECRET: ci-only-secret-value-with-at-least-32-chars!!
+          # Playwright drives many logins per second from one client; the
+          # production build runs NODE_ENV=production, so the E2E-only login
+          # rate-bucket reset must be explicitly enabled (no-op without it).
+          E2E_RESET_RATE_LIMIT: "1"
+          NODE_ENV: development

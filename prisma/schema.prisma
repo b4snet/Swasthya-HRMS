@@ -1,0 +1,1601 @@
+// Swasthya HRMS — Phase 0 schema
+//
+// Entity conventions (docs/architecture.md):
+//   - Every major entity: id, tenantId, organizationId, status, createdAt/By,
+//     updatedAt/By, version.
+//   - Effective-dated entities additionally carry effectiveFrom/effectiveTo.
+//   - Legally/policy-significant entities additionally carry jurisdiction,
+//     source, sourceReference, approvedAt/By (added when those domains land).
+//   - Sensitive records carry classification/accessPolicy/retentionPolicy.
+//
+// Classification enum values reference docs/compliance/privacy.md. No
+// jurisdiction-specific law is encoded here — rules live in versioned
+// jurisdiction rule tables (later phases).
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ── Enumerations ─────────────────────────────────────────────────────────────
+
+enum DataClassification {
+  PUBLIC
+  INTERNAL
+  PERSONAL
+  SENSITIVE_PERSONAL
+  EMPLOYMENT
+  HEALTH_OCCUPATIONAL
+  CREDENTIAL
+}
+
+enum UserStatus {
+  INVITED
+  ACTIVE
+  SUSPENDED
+  DEACTIVATED
+  LOCKED
+}
+
+enum OrganizationStatus {
+  ACTIVE
+  INACTIVE
+  ARCHIVED
+}
+
+enum AuthEventAction {
+  LOGIN_SUCCESS
+  LOGIN_FAILURE
+  LOGIN_RATE_LIMITED
+  LOGOUT
+  SESSION_EXPIRED
+  PASSWORD_CHANGE
+  MFA_ENROLLED
+  MFA_DISABLED
+  ACCOUNT_LOCKED
+  ACCOUNT_UNLOCKED
+}
+
+// ── Core shared model ────────────────────────────────────────────────────────
+
+/// Tenant = customer deployment scope (hospital group). All business data is
+/// tenant-scoped. Enforced at application layer via tenant guards; revisit at
+/// scale per ADR-002.
+model Tenant {
+  id        String   @id @default(cuid())
+  slug      String   @unique
+  name      String
+  status    String   @default("ACTIVE")
+  createdAt DateTime @default(now())
+  createdBy String?
+  updatedAt DateTime @default(now()) @updatedAt
+  updatedBy String?
+  version   Int      @default(1)
+
+  organizations              Organization[]
+  users                      User[]
+  legalEntities              LegalEntity[]
+  orgUnits                   OrgUnit[]
+  departments                Department[]
+  teams                      Team[]
+  designations               Designation[]
+  jobFamilies                JobFamily[]
+  grades                     Grade[]
+  costCenters                CostCenter[]
+  locations                  Location[]
+  facilities                 Facility[]
+  positions                  Position[]
+  reportingEdges             ReportingEdge[]
+  persons                    Person[]
+  identityDocuments          IdentityDocument[]
+  employees                  Employee[]
+  employments                Employment[]
+  employmentAssignments      EmploymentAssignment[]
+  employeeCredentials        EmployeeCredential[]
+  employeeQualifications     EmployeeQualification[]
+  employeeEmergencyContacts  EmployeeEmergencyContact[]
+  employeeDependents         EmployeeDependent[]
+  employeeDocumentReferences EmployeeDocumentReference[]
+  // Phase 3 (ADR-011): contracts, documents, credentials registries.
+  contractTemplates          ContractTemplate[]
+  contractTemplateVersions   ContractTemplateVersion[]
+  contracts                  Contract[]
+  documentTypes              DocumentType[]
+  documents                  Document[]
+  issuingAuthorities         IssuingAuthority[]
+  credentialTypeConfigs      CredentialTypeConfig[]
+  contractParties            ContractParty[]
+  contractVersions           ContractVersion[]
+  documentVersions           DocumentVersion[]
+  documentAccessGrants       DocumentAccessGrant[]
+  credentialVerifications    CredentialVerificationRecord[]
+  credentialRenewals         CredentialRenewal[]
+  qualificationVerifications QualificationVerificationRecord[]
+
+  @@map("tenants")
+}
+
+/// Organization = legal-operational entity anchoring the org structure.
+/// Optional link to the separate LegalEntity record (ADR-009).
+model Organization {
+  id            String    @id @default(cuid())
+  tenantId      String
+  name          String
+  code          String
+  status        String    @default("ACTIVE")
+  legalEntityId String?
+  // Effective dating from Phase 0 (org records are legally significant)
+  effectiveFrom DateTime  @default(now())
+  effectiveTo   DateTime?
+  createdAt     DateTime  @default(now())
+  createdBy     String?
+  updatedAt     DateTime  @default(now()) @updatedAt
+  updatedBy     String?
+  version       Int       @default(1)
+
+  tenant      Tenant       @relation(fields: [tenantId], references: [id])
+  legalEntity LegalEntity? @relation(fields: [legalEntityId], references: [id], onDelete: Restrict)
+
+  users                      User[]
+  orgUnits                   OrgUnit[]
+  departments                Department[]
+  teams                      Team[]
+  designations               Designation[]
+  jobFamilies                JobFamily[]
+  grades                     Grade[]
+  costCenters                CostCenter[]
+  facilities                 Facility[]
+  positions                  Position[]
+  reportingEdges             ReportingEdge[]
+  employees                  Employee[]
+  employments                Employment[]
+  employmentAssignments      EmploymentAssignment[]
+  employeeCredentials        EmployeeCredential[]
+  employeeQualifications     EmployeeQualification[]
+  employeeEmergencyContacts  EmployeeEmergencyContact[]
+  employeeDependents         EmployeeDependent[]
+  employeeDocumentReferences EmployeeDocumentReference[]
+  // Phase 3 (ADR-011).
+  contracts                  Contract[]
+  documents                  Document[]      @relation("OrgDocuments")
+  contractPartyOrganizations ContractParty[] @relation("ContractPartyOrg")
+
+  @@unique([tenantId, code])
+  @@map("organizations")
+}
+
+// ── Identity (Phase 1 domain; minimal Phase 0 slice) ─────────────────────────
+
+model User {
+  id                  String     @id @default(cuid())
+  tenantId            String
+  organizationId      String?
+  email               String
+  passwordHash        String? // bcrypt; null until first credential set (invited)
+  name                String
+  status              UserStatus @default(INVITED)
+  systemRole          String     @default("SYSTEM_ROLE_EMPLOYEE") // SYSTEM_ROLE_* constants (src/lib/auth/rbac.ts)
+  failedLoginAttempts Int        @default(0)
+  lockedUntil         DateTime?
+  lastLoginAt         DateTime?
+  passwordChangedAt   DateTime?
+
+  // Reserved for Phase 1 MFA (ADR-003). Never remove columns; add additively.
+  mfaEnabled    Boolean   @default(false)
+  mfaSecret     String? // encrypted at rest by application layer, never logged
+  mfaEnrolledAt DateTime?
+
+  createdAt DateTime @default(now())
+  createdBy String?
+  updatedAt DateTime @default(now()) @updatedAt
+  updatedBy String?
+  version   Int      @default(1)
+
+  tenant       Tenant            @relation(fields: [tenantId], references: [id])
+  organization Organization?     @relation(fields: [organizationId], references: [id])
+  sessions     Session[]
+  auditEvents  AuditEvent[]      @relation("AuditActor")
+  accessScopes UserAccessScope[]
+
+  @@unique([tenantId, email])
+  @@index([status])
+  @@map("users")
+}
+
+/// Database-backed session (server-side revocable; ADR-003).
+model Session {
+  id        String    @id @default(cuid())
+  userId    String
+  tokenHash String    @unique // sha-256 of session token; raw token never stored
+  expiresAt DateTime
+  createdAt DateTime  @default(now())
+  createdBy String?
+  ip        String? // truncation policy: docs/compliance/privacy.md
+  userAgent String?
+  revokedAt DateTime?
+  revokedBy String?
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+  @@index([expiresAt])
+  @@map("sessions")
+}
+
+/// Row-level data scope grants (ABAC complement to role constants; ADR-003).
+/// Branch/facility scoping arrives with the org domain; the shape is stable.
+model UserAccessScope {
+  id        String    @id @default(cuid())
+  userId    String
+  scopeType String // e.g. ORGANIZATION, BRANCH, DEPARTMENT, PAYROLL
+  scopeId   String
+  grantedAt DateTime  @default(now())
+  grantedBy String?
+  revokedAt DateTime?
+  revokedBy String?
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@unique([userId, scopeType, scopeId])
+  @@map("user_access_scopes")
+}
+
+// ── Audit (ADR-005) — append-only ────────────────────────────────────────────
+
+/// Append-only audit trail. Application code must never UPDATE or DELETE rows.
+/// DB role restrictions for enforcement are documented in ADR-005.
+model AuditEvent {
+  id           String   @id @default(cuid())
+  tenantId     String?
+  actorUserId  String?
+  actorEmail   String? // denormalized: survives user deletion workflows
+  action       String // namespaced, e.g. "auth.login.success"
+  resourceType String
+  resourceId   String?
+  before       Json?
+  after        Json?
+  requestId    String?
+  ip           String?
+  userAgent    String?
+  occurredAt   DateTime @default(now())
+
+  actor User? @relation("AuditActor", fields: [actorUserId], references: [id])
+
+  @@index([tenantId, occurredAt])
+  @@index([actorUserId, occurredAt])
+  @@index([resourceType, resourceId])
+  @@map("audit_events")
+}
+
+/// Structured security/auth event log (separate from business audit; ADR-005).
+model AuthEvent {
+  id         String          @id @default(cuid())
+  userId     String?
+  email      String? // attempted identity; privacy-aware (see docs)
+  action     AuthEventAction
+  success    Boolean
+  requestId  String?
+  ip         String?
+  userAgent  String?
+  detail     Json?
+  occurredAt DateTime        @default(now())
+
+  @@index([userId, occurredAt])
+  @@index([email, occurredAt])
+  @@index([action, occurredAt])
+  @@map("auth_events")
+}
+
+// ── Organization domain (Phase 1; ADR-009) ───────────────────────────────────
+// Conventions: cuid ids, tenant scoping, LifecycleStatus lifecycle, effective
+// dating on time-variant state, version column, createdAt/By + updatedAt/By.
+// ALL foreign keys use onDelete: Restrict — archival replaces deletion.
+
+enum LifecycleStatus {
+  ACTIVE
+  INACTIVE
+  ARCHIVED
+}
+
+enum OrgUnitType {
+  BUSINESS_UNIT
+  DIVISION
+}
+
+enum PositionStatus {
+  VACANT
+  FILLED
+  CLOSED
+}
+
+enum ReportingEdgeType {
+  PRIMARY
+  SECONDARY
+  MATRIX
+}
+
+enum FacilityType {
+  HOSPITAL
+  CLINIC
+  OFFICE
+  OTHER
+}
+
+/// Legal person registered with authorities (tenant-wide, shared by orgs).
+model LegalEntity {
+  id                 String          @id @default(cuid())
+  tenantId           String
+  code               String
+  registeredName     String
+  registrationNumber String?
+  metadata           Json? // jurisdiction fields reserved (ADR-004), not speculative columns
+  status             LifecycleStatus @default(ACTIVE)
+  createdAt          DateTime        @default(now())
+  createdBy          String?
+  updatedAt          DateTime        @default(now()) @updatedAt
+  updatedBy          String?
+  version            Int             @default(1)
+
+  tenant        Tenant         @relation(fields: [tenantId], references: [id])
+  organizations Organization[]
+  orgUnits      OrgUnit[]
+
+  @@unique([tenantId, code])
+  @@map("legal_entities")
+}
+
+/// Business Unit or Division — intermediate structural node (ADR-009).
+model OrgUnit {
+  id             String          @id @default(cuid())
+  tenantId       String
+  organizationId String
+  code           String
+  name           String
+  type           OrgUnitType
+  parentId       String? // same type + same scope, validated in domain layer
+  legalEntityId  String?
+  status         LifecycleStatus @default(ACTIVE)
+  effectiveFrom  DateTime        @default(now())
+  effectiveTo    DateTime?
+  createdAt      DateTime        @default(now())
+  createdBy      String?
+  updatedAt      DateTime        @default(now()) @updatedAt
+  updatedBy      String?
+  version        Int             @default(1)
+
+  tenant       Tenant       @relation(fields: [tenantId], references: [id])
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  parent       OrgUnit?     @relation("OrgUnitTree", fields: [parentId], references: [id], onDelete: Restrict)
+  children     OrgUnit[]    @relation("OrgUnitTree")
+  legalEntity  LegalEntity? @relation(fields: [legalEntityId], references: [id], onDelete: Restrict)
+
+  @@unique([tenantId, organizationId, code])
+  @@index([organizationId])
+  @@index([parentId])
+  @@map("org_units")
+}
+
+/// Organizational unit (ADR-009 distinction from Team).
+model Department {
+  id             String          @id @default(cuid())
+  tenantId       String
+  organizationId String
+  code           String
+  name           String
+  description    String?
+  parentId       String? // same-type parent within the same org
+  status         LifecycleStatus @default(ACTIVE)
+  effectiveFrom  DateTime        @default(now())
+  effectiveTo    DateTime?
+  createdAt      DateTime        @default(now())
+  createdBy      String?
+  updatedAt      DateTime        @default(now()) @updatedAt
+  updatedBy      String?
+  version        Int             @default(1)
+
+  tenant       Tenant                 @relation(fields: [tenantId], references: [id])
+  organization Organization           @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  parent       Department?            @relation("DepartmentTree", fields: [parentId], references: [id], onDelete: Restrict)
+  children     Department[]           @relation("DepartmentTree")
+  teams        Team[]
+  positions    Position[]
+  assignments  EmploymentAssignment[]
+
+  @@unique([tenantId, organizationId, code])
+  @@index([organizationId])
+  @@index([parentId])
+  @@map("departments")
+}
+
+/// Subdivision/group within the organizational structure (ADR-009).
+model Team {
+  id             String          @id @default(cuid())
+  tenantId       String
+  organizationId String
+  code           String
+  name           String
+  description    String?
+  parentId       String? // same-type parent within the same org
+  departmentId   String? // optional owning department
+  status         LifecycleStatus @default(ACTIVE)
+  effectiveFrom  DateTime        @default(now())
+  effectiveTo    DateTime?
+  createdAt      DateTime        @default(now())
+  createdBy      String?
+  updatedAt      DateTime        @default(now()) @updatedAt
+  updatedBy      String?
+  version        Int             @default(1)
+
+  tenant       Tenant                 @relation(fields: [tenantId], references: [id])
+  organization Organization           @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  parent       Team?                  @relation("TeamTree", fields: [parentId], references: [id], onDelete: Restrict)
+  children     Team[]                 @relation("TeamTree")
+  department   Department?            @relation(fields: [departmentId], references: [id], onDelete: Restrict)
+  positions    Position[]
+  assignments  EmploymentAssignment[]
+
+  @@unique([tenantId, organizationId, code])
+  @@index([organizationId])
+  @@index([parentId])
+  @@index([departmentId])
+  @@map("teams")
+}
+
+/// Classification/title assigned to workers (e.g. Medical Officer).
+model Designation {
+  id             String          @id @default(cuid())
+  tenantId       String
+  organizationId String
+  code           String
+  name           String
+  level          Int?
+  status         LifecycleStatus @default(ACTIVE)
+  createdAt      DateTime        @default(now())
+  createdBy      String?
+  updatedAt      DateTime        @default(now()) @updatedAt
+  updatedBy      String?
+  version        Int             @default(1)
+
+  tenant       Tenant                 @relation(fields: [tenantId], references: [id])
+  organization Organization           @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  positions    Position[]
+  assignments  EmploymentAssignment[]
+
+  @@unique([tenantId, organizationId, code])
+  @@index([organizationId])
+  @@map("designations")
+}
+
+/// Job family classification (e.g. Clinical, Administrative).
+model JobFamily {
+  id             String          @id @default(cuid())
+  tenantId       String
+  organizationId String
+  code           String
+  name           String
+  status         LifecycleStatus @default(ACTIVE)
+  createdAt      DateTime        @default(now())
+  createdBy      String?
+  updatedAt      DateTime        @default(now()) @updatedAt
+  updatedBy      String?
+  version        Int             @default(1)
+
+  tenant       Tenant       @relation(fields: [tenantId], references: [id])
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  positions    Position[]
+
+  @@unique([tenantId, organizationId, code])
+  @@index([organizationId])
+  @@map("job_families")
+}
+
+/// Grade classification with optional ordinal level.
+model Grade {
+  id             String          @id @default(cuid())
+  tenantId       String
+  organizationId String
+  code           String
+  name           String
+  level          Int?
+  status         LifecycleStatus @default(ACTIVE)
+  createdAt      DateTime        @default(now())
+  createdBy      String?
+  updatedAt      DateTime        @default(now()) @updatedAt
+  updatedBy      String?
+  version        Int             @default(1)
+
+  tenant       Tenant       @relation(fields: [tenantId], references: [id])
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  positions    Position[]
+
+  @@unique([tenantId, organizationId, code])
+  @@index([organizationId])
+  @@map("grades")
+}
+
+/// Cost center for financial attribution.
+model CostCenter {
+  id             String          @id @default(cuid())
+  tenantId       String
+  organizationId String
+  code           String
+  name           String
+  status         LifecycleStatus @default(ACTIVE)
+  createdAt      DateTime        @default(now())
+  createdBy      String?
+  updatedAt      DateTime        @default(now()) @updatedAt
+  updatedBy      String?
+  version        Int             @default(1)
+
+  tenant       Tenant       @relation(fields: [tenantId], references: [id])
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  positions    Position[]
+
+  @@unique([tenantId, organizationId, code])
+  @@index([organizationId])
+  @@map("cost_centers")
+}
+
+/// Geographic/physical location (tenant-wide; facilities reference it).
+model Location {
+  id          String          @id @default(cuid())
+  tenantId    String
+  code        String
+  name        String
+  addressLine String?
+  city        String?
+  district    String?
+  province    String?
+  country     String // ISO 3166-1 alpha-2
+  postalCode  String?
+  status      LifecycleStatus @default(ACTIVE)
+  createdAt   DateTime        @default(now())
+  createdBy   String?
+  updatedAt   DateTime        @default(now()) @updatedAt
+  updatedBy   String?
+  version     Int             @default(1)
+
+  tenant                  Tenant                 @relation(fields: [tenantId], references: [id])
+  facilities              Facility[]
+  employmentWorkLocations Employment[]           @relation("EmploymentWorkLocation")
+  assignmentWorkLocations EmploymentAssignment[] @relation("AssignmentWorkLocation")
+
+  @@unique([tenantId, code])
+  @@map("locations")
+}
+
+/// Operational site (hospital, clinic, office) — distinct from Location (ADR-009).
+model Facility {
+  id             String          @id @default(cuid())
+  tenantId       String
+  organizationId String
+  code           String
+  name           String
+  type           FacilityType
+  locationId     String
+  status         LifecycleStatus @default(ACTIVE)
+  effectiveFrom  DateTime        @default(now())
+  effectiveTo    DateTime?
+  createdAt      DateTime        @default(now())
+  createdBy      String?
+  updatedAt      DateTime        @default(now()) @updatedAt
+  updatedBy      String?
+  version        Int             @default(1)
+
+  tenant       Tenant                 @relation(fields: [tenantId], references: [id])
+  organization Organization           @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  location     Location               @relation(fields: [locationId], references: [id], onDelete: Restrict)
+  employments  Employment[]           @relation("EmploymentFacility")
+  assignments  EmploymentAssignment[] @relation("AssignmentFacility")
+  credentials  EmployeeCredential[]
+
+  @@unique([tenantId, organizationId, code])
+  @@index([organizationId])
+  @@index([locationId])
+  @@map("facilities")
+}
+
+/// Fillable organizational seat (ADR-009: not a title, not a person).
+/// Occupancy (which employee fills it) belongs to the Workforce domain.
+model Position {
+  id             String         @id @default(cuid())
+  tenantId       String
+  organizationId String
+  code           String
+  title          String?
+  departmentId   String? // seat hangs off at most one owning unit (domain rule)
+  teamId         String?
+  designationId  String?
+  gradeId        String?
+  jobFamilyId    String?
+  costCenterId   String?
+  status         PositionStatus @default(VACANT)
+  effectiveFrom  DateTime       @default(now())
+  effectiveTo    DateTime?
+  createdAt      DateTime       @default(now())
+  createdBy      String?
+  updatedAt      DateTime       @default(now()) @updatedAt
+  updatedBy      String?
+  version        Int            @default(1)
+
+  tenant        Tenant                 @relation(fields: [tenantId], references: [id])
+  organization  Organization           @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  department    Department?            @relation(fields: [departmentId], references: [id], onDelete: Restrict)
+  team          Team?                  @relation(fields: [teamId], references: [id], onDelete: Restrict)
+  designation   Designation?           @relation(fields: [designationId], references: [id], onDelete: Restrict)
+  grade         Grade?                 @relation(fields: [gradeId], references: [id], onDelete: Restrict)
+  jobFamily     JobFamily?             @relation(fields: [jobFamilyId], references: [id], onDelete: Restrict)
+  costCenter    CostCenter?            @relation(fields: [costCenterId], references: [id], onDelete: Restrict)
+  reportingFrom ReportingEdge[]        @relation("ReportingSource")
+  reportingTo   ReportingEdge[]        @relation("ReportingTarget")
+  assignments   EmploymentAssignment[]
+
+  @@unique([tenantId, organizationId, code])
+  @@index([organizationId])
+  @@index([departmentId])
+  @@index([teamId])
+  @@index([status])
+  @@map("positions")
+}
+
+/// Reporting relationship between positions (ADR-009): source reports to
+/// target. Type PRIMARY|SECONDARY|MATRIX; effective-dated; never deleted —
+/// close with effectiveTo. One ACTIVE edge per (pair, type) enforced by a
+/// partial unique index in the migration (Prisma cannot express it).
+model ReportingEdge {
+  id               String            @id @default(cuid())
+  tenantId         String
+  organizationId   String
+  sourcePositionId String // subordinate
+  targetPositionId String // manager/lead
+  type             ReportingEdgeType
+  status           LifecycleStatus   @default(ACTIVE)
+  effectiveFrom    DateTime          @default(now())
+  effectiveTo      DateTime?
+  createdAt        DateTime          @default(now())
+  createdBy        String?
+  updatedAt        DateTime          @default(now()) @updatedAt
+  updatedBy        String?
+  version          Int               @default(1)
+
+  tenant         Tenant       @relation(fields: [tenantId], references: [id])
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  sourcePosition Position     @relation("ReportingSource", fields: [sourcePositionId], references: [id], onDelete: Restrict)
+  targetPosition Position     @relation("ReportingTarget", fields: [targetPositionId], references: [id], onDelete: Restrict)
+
+  @@index([organizationId])
+  @@index([sourcePositionId])
+  @@index([targetPositionId])
+  @@map("reporting_edges")
+}
+
+// ── Workforce domain (Phase 2; ADR-010) ───────────────────────────────────
+// Person ≠ Employee ≠ Employment (ADR-010 §1). Assignments are effective-
+// dated rows, not snapshots (§3); history is never overwritten — changes
+// close the prior row and insert a new one. Sensitive personal fields carry
+// classification notes and are served only through the service-layer
+// sensitive projection (plan §5.3); they must never reach logs or audit
+// payloads unmasked. All FKs onDelete: Restrict — separations are lifecycle
+// states, never deletes; archival is the only removal path.
+
+enum IdentityDocumentType {
+  CITIZENSHIP
+  PASSPORT
+  NATIONAL_ID
+  DRIVING_LICENSE
+}
+
+enum EmployeeType {
+  REGULAR
+  CONTRACT
+  PROBATION
+  LOCUM
+  INTERN
+  VOLUNTEER
+  OTHER
+}
+
+enum EmploymentType {
+  PERMANENT
+  PROBATION
+  CONTRACT
+  LOCUM
+  INTERN
+  VOLUNTEER
+}
+
+enum EmploymentStatus {
+  DRAFT
+  PENDING_ONBOARDING
+  ACTIVE
+  SUSPENDED
+  INACTIVE
+  TERMINATED
+  RESIGNED
+  RETIRED
+}
+
+enum WorkerClassification {
+  EMPLOYEE
+  CONTRACTOR
+  TRAINEE
+  VOLUNTEER
+}
+
+enum CredentialType {
+  LICENSE
+  CERTIFICATION
+  REGISTRATION
+  CLEARANCE
+}
+
+// Phase 3 (ADR-011 §3): IN_PROGRESS joins the Phase 2 set for real council
+// turnarounds; EXPIRED remains DERIVED (never manually written); REJECTED
+// mirrors the record-outcome set so the denormalized status can carry a
+// rejected verification without inventing a second state vocabulary.
+enum CredentialVerificationStatus {
+  PENDING
+  IN_PROGRESS
+  VERIFIED
+  REJECTED
+  EXPIRED
+  REVOKED
+  SUSPENDED
+}
+
+enum QualificationType {
+  DEGREE
+  DIPLOMA
+  TRAINING
+}
+
+enum DependentRelationship {
+  SPOUSE
+  CHILD
+  PARENT
+  OTHER
+}
+
+enum TerminationReason {
+  MISCONDUCT
+  PERFORMANCE
+  REDUNDANCY
+  END_OF_CONTRACT
+  MUTUAL_AGREEMENT
+  DEATH
+  OTHER
+}
+
+/// The human (ADR-010 §1): tenant-scoped, org-independent, never a login
+/// account. Sensitive columns (dateOfBirth, address) are classified
+/// SENSITIVE_PERSONAL — served only via the sensitive projection choke
+/// point; never logged, never in audit payloads unmasked (plan §7).
+model Person {
+  id            String          @id @default(cuid())
+  tenantId      String
+  firstName     String
+  middleName    String?
+  lastName      String
+  preferredName String?
+  dateOfBirth   DateTime? // SENSITIVE_PERSONAL (plan §7)
+  nationality   String? // ISO 3166-1 alpha-2 when present
+  email         String?
+  phone         String?
+  addressLine1  String? // SENSITIVE_PERSONAL (plan §7)
+  addressLine2  String?
+  city          String?
+  province      String?
+  country       String? // ISO 3166-1 alpha-2 when present
+  postalCode    String?
+  status        LifecycleStatus @default(ACTIVE)
+  createdAt     DateTime        @default(now())
+  createdBy     String?
+  updatedAt     DateTime        @default(now()) @updatedAt
+  updatedBy     String?
+  version       Int             @default(1)
+
+  tenant    Tenant             @relation(fields: [tenantId], references: [id])
+  employees Employee[]
+  documents IdentityDocument[]
+  contractParties ContractParty[]
+
+  @@index([tenantId, lastName, firstName])
+  @@map("persons")
+}
+
+/// Identity-document REFERENCE (plan §2): type + masked number + validity.
+/// Never stores document images or full numbers — those belong to the
+/// future Documents/secure-storage phase. numberMasked keeps last 4 only.
+model IdentityDocument {
+  id               String               @id @default(cuid())
+  tenantId         String
+  personId         String
+  type             IdentityDocumentType
+  numberMasked     String // e.g. "••••1234" — last 4 at most (plan §7)
+  issuingAuthority String?
+  issueDate        DateTime?
+  expiryDate       DateTime?
+  status           LifecycleStatus      @default(ACTIVE)
+  createdAt        DateTime             @default(now())
+  createdBy        String?
+  updatedAt        DateTime             @default(now()) @updatedAt
+  updatedBy        String?
+  version          Int                  @default(1)
+
+  tenant Tenant @relation(fields: [tenantId], references: [id])
+  person Person @relation(fields: [personId], references: [id], onDelete: Restrict)
+
+  @@unique([personId, type, numberMasked])
+  @@index([personId])
+  @@map("identity_documents")
+}
+
+/// Workforce relationship wrapper: a Person employed by one Organization
+/// (ADR-010 §1). Unique per (tenant, organization, person) — the same
+/// person may be an employee of two organizations in the tenant, each with
+/// an independent lifecycle. employeeNo is the org-scoped durable identity;
+/// format validated in the domain layer, not DB-generated (§4).
+model Employee {
+  id               String           @id @default(cuid())
+  tenantId         String
+  organizationId   String
+  personId         String
+  employeeNo       String
+  employeeType     EmployeeType     @default(REGULAR)
+  /// Current employment status, denormalized from the employment row at
+  /// transition time (single-writer: employment status service).
+  employmentStatus EmploymentStatus @default(DRAFT)
+  hiredOn          DateTime?
+  leftOn           DateTime? // separation date once terminal
+  status           LifecycleStatus  @default(ACTIVE)
+  createdAt        DateTime         @default(now())
+  createdBy        String?
+  updatedAt        DateTime         @default(now()) @updatedAt
+  updatedBy        String?
+  version          Int              @default(1)
+
+  tenant            Tenant                      @relation(fields: [tenantId], references: [id])
+  organization      Organization                @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  person            Person                      @relation(fields: [personId], references: [id], onDelete: Restrict)
+  employments       Employment[]
+  credentials       EmployeeCredential[]
+  qualifications    EmployeeQualification[]
+  emergencyContacts EmployeeEmergencyContact[]
+  dependents        EmployeeDependent[]
+  documentRefs      EmployeeDocumentReference[]
+
+  @@unique([tenantId, organizationId, personId])
+  @@unique([tenantId, organizationId, employeeNo])
+  @@index([organizationId])
+  @@index([personId])
+  @@index([employmentStatus])
+  @@index([status])
+  @@map("employees")
+}
+
+/// One contractual period of one employee (ADR-010 §1). Distinct from
+/// Employee so rehires/concurrent engagements never overwrite history.
+/// statusHistory appends { status, changedAt, changedBy } on every
+/// transition so "why was X suspended in March" is answerable from one
+/// row (plan §4). Carries its own tenant+organization FKs for query
+/// hygiene (same pattern as Phase 1 Facility).
+model Employment {
+  id                   String               @id @default(cuid())
+  tenantId             String
+  organizationId       String
+  employeeId           String
+  employmentNo         String
+  type                 EmploymentType
+  status               EmploymentStatus     @default(DRAFT)
+  hireDate             DateTime
+  contractEndDate      DateTime?
+  probationEndDate     DateTime?
+  workLocationId       String? // Location (tenant-wide)
+  facilityId           String? // Facility (org-scoped)
+  workerClassification WorkerClassification @default(EMPLOYEE)
+  noticePeriodDays     Int?
+  terminationDate      DateTime?
+  terminationReason    TerminationReason?
+  resignationDate      DateTime?
+  retirementDate       DateTime?
+  statusHistory        Json                 @default("[]") // [{status, changedAt, changedBy, note?}]
+  createdAt            DateTime             @default(now())
+  createdBy            String?
+  updatedAt            DateTime             @default(now()) @updatedAt
+  updatedBy            String?
+  version              Int                  @default(1)
+
+  tenant             Tenant                 @relation(fields: [tenantId], references: [id])
+  organization       Organization           @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  employee           Employee               @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+  workLocation       Location?              @relation("EmploymentWorkLocation", fields: [workLocationId], references: [id], onDelete: Restrict)
+  facility           Facility?              @relation("EmploymentFacility", fields: [facilityId], references: [id], onDelete: Restrict)
+  assignments        EmploymentAssignment[] @relation("AssignmentEmployment")
+  managedAssignments EmploymentAssignment[] @relation("AssignmentManager")
+  contracts          Contract[]
+
+  @@unique([tenantId, organizationId, employmentNo])
+  @@index([organizationId])
+  @@index([employeeId])
+  @@index([status])
+  @@map("employments")
+}
+
+/// The single effective-dated fact table binding an employment over
+/// [effectiveFrom, effectiveTo) to org structure: position, department,
+/// team, designation, work location, facility, and the manager employment
+/// in effect for that period (ADR-010 §3 — no employee.managerId column,
+/// no Position.employeeId column; occupancy derives from the OPEN
+/// assignment). Exactly one OPEN assignment per employment is enforced by
+/// the hand-written partial unique index in the migration
+/// (`assignments_open_per_employment_key`); handover = close old + open
+/// new in the same transaction.
+model EmploymentAssignment {
+  id                  String          @id @default(cuid())
+  tenantId            String
+  organizationId      String
+  employmentId        String
+  positionId          String?
+  departmentId        String?
+  teamId              String?
+  designationId       String?
+  workLocationId      String?
+  facilityId          String?
+  managerEmploymentId String? // manager's Employment (same org; validated in service)
+  effectiveFrom       DateTime
+  effectiveTo         DateTime?
+  status              LifecycleStatus @default(ACTIVE)
+  createdAt           DateTime        @default(now())
+  createdBy           String?
+  updatedAt           DateTime        @default(now()) @updatedAt
+  updatedBy           String?
+  version             Int             @default(1)
+
+  tenant            Tenant       @relation(fields: [tenantId], references: [id])
+  organization      Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  employment        Employment   @relation("AssignmentEmployment", fields: [employmentId], references: [id], onDelete: Restrict)
+  position          Position?    @relation(fields: [positionId], references: [id], onDelete: Restrict)
+  department        Department?  @relation(fields: [departmentId], references: [id], onDelete: Restrict)
+  team              Team?        @relation(fields: [teamId], references: [id], onDelete: Restrict)
+  designation       Designation? @relation(fields: [designationId], references: [id], onDelete: Restrict)
+  workLocation      Location?    @relation("AssignmentWorkLocation", fields: [workLocationId], references: [id], onDelete: Restrict)
+  facility          Facility?    @relation("AssignmentFacility", fields: [facilityId], references: [id], onDelete: Restrict)
+  managerEmployment Employment?  @relation("AssignmentManager", fields: [managerEmploymentId], references: [id], onDelete: Restrict)
+
+  @@index([organizationId])
+  @@index([employmentId])
+  @@index([positionId])
+  @@index([departmentId])
+  @@index([managerEmploymentId])
+  @@index([effectiveFrom])
+  @@map("employment_assignments")
+}
+
+/// Healthcare credential REFERENCE (ADR-010 §6): license/certification
+/// metadata + verification status. Extends into the dedicated credential
+/// phase later; no document payloads here. EMPLOYMENT classification —
+/// NOT health-occupational (plan §7; ADR-007 boundary respected).
+model EmployeeCredential {
+  id                 String                       @id @default(cuid())
+  tenantId           String
+  organizationId     String
+  employeeId         String
+  type               CredentialType
+  name               String
+  code               String?
+  issuer             String
+  credentialNumber   String? // masked at service layer when projected
+  issuedOn           DateTime?
+  expiresOn          DateTime?
+  verificationStatus CredentialVerificationStatus @default(PENDING)
+  // Phase 3 (ADR-011 §3): verification is an explicit recorded act. The
+  // columns below are the denormalized CURRENT state; the append-only
+  // CredentialVerificationRecord rows are the history (never overwritten).
+  jurisdiction       String?
+  issuingAuthorityId String?
+  verifiedAt         DateTime?
+  verifiedBy         String?
+  verificationRecordId String?
+  specialty          String?
+  facilityId         String? // where the credential is exercised
+  status             LifecycleStatus              @default(ACTIVE)
+  createdAt          DateTime                     @default(now())
+  createdBy          String?
+  updatedAt          DateTime                     @default(now()) @updatedAt
+  updatedBy          String?
+  version            Int                          @default(1)
+
+  tenant            Tenant       @relation(fields: [tenantId], references: [id])
+  organization      Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  employee          Employee     @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+  facility          Facility?    @relation(fields: [facilityId], references: [id], onDelete: Restrict)
+  issuingAuthority  IssuingAuthority? @relation(fields: [issuingAuthorityId], references: [id], onDelete: Restrict)
+  verificationRecords CredentialVerificationRecord[]
+  renewals            CredentialRenewal[]
+
+  @@index([organizationId])
+  @@index([employeeId])
+  @@index([verificationStatus])
+  @@index([expiresOn])
+  @@index([issuingAuthorityId])
+  @@index([issuer])
+  @@map("employee_credentials")
+}
+
+/// Education/training reference (ADR-010 §6).
+model EmployeeQualification {
+  id             String            @id @default(cuid())
+  tenantId       String
+  organizationId String
+  employeeId     String
+  type            QualificationType
+  name            String
+  institution     String?
+  fieldOfStudy    String?
+  awardingBody    String?
+  country         String? // ISO 3166 alpha-2, data not code (ADR-004)
+  completedOn     DateTime?
+  registrationNo  String?
+  // Phase 3 (ADR-011 §3): lighter verification mirror for qualifications.
+  issuingAuthorityId String?
+  verifiedAt         DateTime?
+  verifiedBy         String?
+  documentId         String? // evidence Document (Documents domain)
+  status          LifecycleStatus   @default(ACTIVE)
+  createdAt       DateTime          @default(now())
+  createdBy       String?
+  updatedAt       DateTime          @default(now()) @updatedAt
+  updatedBy       String?
+  version         Int               @default(1)
+
+  tenant       Tenant       @relation(fields: [tenantId], references: [id])
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  employee     Employee     @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+  issuingAuthority IssuingAuthority? @relation("QualificationAuthority", fields: [issuingAuthorityId], references: [id], onDelete: Restrict)
+  verificationRecords QualificationVerificationRecord[]
+
+  @@index([organizationId])
+  @@index([employeeId])
+  @@map("employee_qualifications")
+}
+
+/// Emergency contact (plan §2). Minimal PII: name/relationship/phone —
+/// no addresses or ID numbers (purpose limitation, plan §7).
+model EmployeeEmergencyContact {
+  id             String          @id @default(cuid())
+  tenantId       String
+  organizationId String
+  employeeId     String
+  name           String
+  relationship   String
+  phone          String
+  email          String?
+  isPrimary      Boolean         @default(false)
+  status         LifecycleStatus @default(ACTIVE)
+  createdAt      DateTime        @default(now())
+  createdBy      String?
+  updatedAt      DateTime        @default(now()) @updatedAt
+  updatedBy      String?
+  version        Int             @default(1)
+
+  tenant       Tenant       @relation(fields: [tenantId], references: [id])
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  employee     Employee     @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+
+  @@index([organizationId])
+  @@index([employeeId])
+  @@map("employee_emergency_contacts")
+}
+
+/// Dependent (benefits eligibility arrives with Payroll phase; ADR-010).
+/// dateOfBirth here is SENSITIVE_PERSONAL — masked projection only.
+model EmployeeDependent {
+  id             String                @id @default(cuid())
+  tenantId       String
+  organizationId String
+  employeeId     String
+  name           String
+  relationship   DependentRelationship
+  dateOfBirth    DateTime? // SENSITIVE_PERSONAL (plan §7)
+  status         LifecycleStatus       @default(ACTIVE)
+  createdAt      DateTime              @default(now())
+  createdBy      String?
+  updatedAt      DateTime              @default(now()) @updatedAt
+  updatedBy      String?
+  version        Int                   @default(1)
+
+  tenant       Tenant       @relation(fields: [tenantId], references: [id])
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  employee     Employee     @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+
+  @@index([organizationId])
+  @@index([employeeId])
+  @@map("employee_dependents")
+}
+
+/// Pointer to a stored document (metadata/reference only — payload storage
+/// is the Documents phase with secure object storage; ADR-010 §6).
+model EmployeeDocumentReference {
+  id             String             @id @default(cuid())
+  tenantId       String
+  organizationId String
+  employeeId     String
+  docType        String
+  title          String
+  documentRef    String // legacy Phase 2 opaque pointer; new rows also set documentId
+  documentId     String? // resolved Documents-domain Document (Phase 3)
+  classification DataClassification @default(EMPLOYMENT)
+  status         LifecycleStatus    @default(ACTIVE)
+  createdAt      DateTime           @default(now())
+  createdBy      String?
+  updatedAt      DateTime           @default(now()) @updatedAt
+  updatedBy      String?
+  version        Int                @default(1)
+
+  tenant       Tenant       @relation(fields: [tenantId], references: [id])
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  employee     Employee     @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+  document     Document?    @relation(fields: [documentId], references: [id], onDelete: Restrict)
+
+  @@index([organizationId])
+  @@index([employeeId])
+  @@map("employee_document_references")
+}
+
+// ════════════════════════════════════════════════════════════════════════
+// Phase 3 — Contracts, Documents, Credentials (ADR-011)
+// ════════════════════════════════════════════════════════════════════════
+
+enum ContractStatus {
+  DRAFT
+  PENDING_APPROVAL
+  ACTIVE
+  EXPIRED
+  TERMINATED
+  ARCHIVED
+}
+
+enum ContractType {
+  EMPLOYMENT
+  SECONDMENT
+  NDA
+  CONFIDENTIALITY
+  LOCUM
+  CONSULTANCY
+  INTERNSHIP
+  OTHER
+}
+
+enum ContractPartyType {
+  EMPLOYEE
+  EMPLOYER_ORGANIZATION
+  WITNESS
+  GUARDIAN
+  OTHER
+}
+
+enum DocumentSubjectType {
+  EMPLOYEE
+  PERSON
+  EMPLOYMENT
+  CONTRACT
+  CREDENTIAL
+  ORGANIZATION
+}
+
+enum AuthorityType {
+  MEDICAL_COUNCIL
+  NURSING_COUNCIL
+  GOVERNMENT
+  UNIVERSITY
+  BOARD
+  OTHER
+}
+
+enum VerificationOutcome {
+  PENDING
+  IN_PROGRESS
+  VERIFIED
+  REJECTED
+  EXPIRED
+  REVOKED
+  SUSPENDED
+}
+
+enum VerificationMethod {
+  ISSUER_DIRECT
+  PORTAL
+  DOCUMENT_INSPECTION
+  PHONE
+  OTHER
+}
+
+/// Reusable agreement skeleton. Bodies live in the Documents domain (a
+/// bodyTemplateRef points at a Document row); clause structure is
+/// configuration, never source-embedded legal text (ADR-004). Templates
+/// are versioned: the CURRENT row points at its active template version.
+model ContractTemplate {
+  id             String            @id @default(cuid())
+  tenantId       String
+  code           String
+  name           String
+  jurisdiction   String? // jurisdiction-profile id (data, ADR-004)
+  description    String?
+  currentVersion Int               @default(1)
+  status         LifecycleStatus   @default(ACTIVE)
+  effectiveFrom  DateTime          @default(now())
+  effectiveTo    DateTime?
+  createdAt      DateTime          @default(now())
+  createdBy      String?
+  updatedAt      DateTime          @default(now()) @updatedAt
+  updatedBy      String?
+  version        Int               @default(1)
+
+  tenant   Tenant                    @relation(fields: [tenantId], references: [id])
+  versions ContractTemplateVersion[]
+  contracts Contract[]
+
+  @@unique([tenantId, code])
+  @@index([status])
+  @@map("contract_templates")
+}
+
+/// Immutable version rows for a template. "Edit a template" = new version
+/// row + bump currentVersion (never overwrite). Insert-only.
+model ContractTemplateVersion {
+  id           String   @id @default(cuid())
+  tenantId     String
+  templateId   String
+  versionNo    Int
+  note         String?
+  bodyDocumentId String? // Documents-domain Document holding the text
+  changes      Json     @default("{}")
+  createdAt    DateTime @default(now())
+  createdBy    String?
+
+  tenant   Tenant           @relation(fields: [tenantId], references: [id])
+  template ContractTemplate @relation(fields: [templateId], references: [id], onDelete: Restrict)
+  bodyDocument Document?    @relation("TemplateBodyDocument", fields: [bodyDocumentId], references: [id], onDelete: Restrict)
+
+  @@unique([templateId, versionNo])
+  @@map("contract_template_versions")
+}
+
+/// One agreement artifact binding an employment (ADR-011 §1). Distinct
+/// from Employment: contractEndDate on Employment is the workforce fact;
+/// the Contract row is the signed agreement with its own lifecycle and
+/// append-only term versions. Salary/amount values are structurally
+/// absent (Payroll owns them; ADR-011).
+model Contract {
+  id                 String         @id @default(cuid())
+  tenantId           String
+  organizationId     String
+  employmentId       String
+  contractNo         String
+  templateId         String?
+  templateVersionNo  Int? // the template version this contract was cut from
+  title              String
+  type               ContractType
+  status             ContractStatus @default(DRAFT)
+  jurisdiction       String? // data, not code (ADR-004)
+  effectiveFrom      DateTime
+  effectiveTo        DateTime?
+  signedOn           DateTime?
+  signedByEmployee   String? // free-text signatory name (no e-sign this phase)
+  signedByEmployer   String?
+  approvedBy         String?
+  approvedAt         DateTime?
+  currentVersionNo   Int            @default(1)
+  documentId         String? // primary artifact Document (Documents domain)
+  notes              String?
+  createdAt          DateTime       @default(now())
+  createdBy          String?
+  updatedAt          DateTime       @default(now()) @updatedAt
+  updatedBy          String?
+  version            Int            @default(1)
+
+  tenant       Tenant               @relation(fields: [tenantId], references: [id])
+  organization Organization         @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  employment   Employment           @relation(fields: [employmentId], references: [id], onDelete: Restrict)
+  template     ContractTemplate?    @relation(fields: [templateId], references: [id], onDelete: Restrict)
+  document     Document?            @relation("ContractPrimaryDocument", fields: [documentId], references: [id], onDelete: Restrict)
+  versions     ContractVersion[]
+  parties      ContractParty[]
+
+  @@unique([tenantId, organizationId, contractNo])
+  @@index([organizationId])
+  @@index([employmentId])
+  @@index([status])
+  @@index([effectiveTo])
+  @@map("contracts")
+}
+
+/// Append-only dated term-set for a contract. Amendment = close current
+/// version + insert a new one in the same transaction; rows are NEVER
+/// updated (ADR-011 §1). Clause names only — no amounts (plan §3).
+model ContractVersion {
+  id            String   @id @default(cuid())
+  tenantId      String
+  contractId    String
+  versionNo     Int
+  effectiveFrom DateTime
+  effectiveTo   DateTime?
+  clauseNames   Json     @default("[]") // ["PROBATION_6M", "NOTICE_30D", ...]
+  note          String?
+  supersededAt  DateTime?
+  supersededBy  String?
+  createdAt     DateTime @default(now())
+  createdBy     String?
+
+  tenant    Tenant   @relation(fields: [tenantId], references: [id])
+  contract  Contract @relation(fields: [contractId], references: [id], onDelete: Restrict)
+
+  @@unique([contractId, versionNo])
+  @@index([contractId])
+  @@map("contract_versions")
+}
+
+/// Who is bound by a contract (extensible beyond employee + employer).
+model ContractParty {
+  id              String            @id @default(cuid())
+  tenantId        String
+  contractId      String
+  partyType       ContractPartyType
+  personId        String?
+  organizationId  String?
+  freeTextName    String? // witnesses/guardians without system records
+  role            String?
+  acknowledgedAt  DateTime?
+  acknowledgedBy  String?
+  createdAt       DateTime          @default(now())
+  createdBy       String?
+
+  tenant       Tenant       @relation(fields: [tenantId], references: [id])
+  contract     Contract     @relation(fields: [contractId], references: [id], onDelete: Restrict)
+  person       Person?      @relation(fields: [personId], references: [id], onDelete: Restrict)
+  organization Organization? @relation("ContractPartyOrg", fields: [organizationId], references: [id], onDelete: Restrict)
+
+  @@index([contractId])
+  @@map("contract_parties")
+}
+
+/// Tenant-configurable document classification vocabulary (data-driven).
+model DocumentType {
+  id                     String             @id @default(cuid())
+  tenantId               String
+  code                   String
+  name                   String
+  defaultClassification  DataClassification @default(EMPLOYMENT)
+  requiresVerification   Boolean            @default(false)
+  retentionDays          Int?
+  description            String?
+  status                 LifecycleStatus    @default(ACTIVE)
+  createdAt              DateTime           @default(now())
+  createdBy              String?
+  updatedAt              DateTime           @default(now()) @updatedAt
+  updatedBy              String?
+  version                Int                @default(1)
+
+  tenant    Tenant     @relation(fields: [tenantId], references: [id])
+  documents Document[]
+
+  @@unique([tenantId, code])
+  @@index([status])
+  @@map("document_types")
+}
+
+/// The logical document: one row per real-world document. Bytes live only
+/// in the object store behind DocumentStorage (ADR-011 §2); this row plus
+/// its DocumentVersion rows are the business metadata. subjectType+subjectId
+/// is the typed polymorphism — the service resolves the concrete row
+/// through tenant-scoped queries (never a raw id lookup).
+model Document {
+  id               String              @id @default(cuid())
+  tenantId         String
+  organizationId   String? // nullable: tenant-wide docs (e.g. templates)
+  subjectType      DocumentSubjectType
+  subjectId        String
+  typeId           String
+  title            String
+  description      String?
+  classification   DataClassification  @default(EMPLOYMENT)
+  currentVersionNo Int                 @default(1)
+  effectiveFrom    DateTime            @default(now())
+  effectiveTo      DateTime? // expiry / validity window
+  status           LifecycleStatus     @default(ACTIVE)
+  createdAt        DateTime            @default(now())
+  createdBy        String?
+  updatedAt        DateTime            @default(now()) @updatedAt
+  updatedBy        String?
+  version          Int                 @default(1)
+
+  tenant    Tenant            @relation(fields: [tenantId], references: [id])
+  organization Organization?    @relation("OrgDocuments", fields: [organizationId], references: [id], onDelete: Restrict)
+  type      DocumentType      @relation(fields: [typeId], references: [id], onDelete: Restrict)
+  versions  DocumentVersion[]
+  accessGrants DocumentAccessGrant[]
+  referencedByDocRefs EmployeeDocumentReference[]
+  contractReferences  Contract[]          @relation("ContractPrimaryDocument")
+  templateBodies      ContractTemplateVersion[] @relation("TemplateBodyDocument")
+  credentialEvidence  CredentialVerificationRecord[] @relation("CredentialEvidenceDocument")
+  qualificationEvidence QualificationVerificationRecord[] @relation("QualificationEvidenceDocument")
+
+  @@index([organizationId])
+  @@index([subjectType, subjectId])
+  @@index([typeId])
+  @@index([status])
+  @@index([effectiveTo])
+  @@map("documents")
+}
+
+/// Insert-only byte references: storageId + detected content type + size
+/// + sha256. Replacement = new version + supersede the old; rows are
+/// never updated (ADR-011 §2). storageId is opaque and NEVER a URL.
+model DocumentVersion {
+  id             String    @id @default(cuid())
+  tenantId       String
+  documentId     String
+  versionNo      Int
+  storageId      String
+  contentType    String // detected server-side, never client-claimed
+  sizeBytes      Int
+  checksumSha256 String
+  note           String?
+  supersededAt   DateTime?
+  supersededBy   String?
+  uploadedAt     DateTime  @default(now())
+  uploadedBy     String?
+
+  tenant   Tenant   @relation(fields: [tenantId], references: [id])
+  document Document @relation(fields: [documentId], references: [id], onDelete: Restrict)
+
+  @@unique([documentId, versionNo])
+  @@index([documentId])
+  @@index([storageId])
+  @@map("document_versions")
+}
+
+/// Explicit ACL beyond role defaults; auditable grants/revocations.
+model DocumentAccessGrant {
+  id           String    @id @default(cuid())
+  tenantId     String
+  documentId   String
+  granteeType  String // USER | ROLE | SCOPE (values are stable constants)
+  granteeValue String
+  canView      Boolean   @default(true)
+  canDownload  Boolean   @default(true)
+  grantedBy    String?
+  revokedAt    DateTime?
+  createdAt    DateTime  @default(now())
+
+  tenant   Tenant   @relation(fields: [tenantId], references: [id])
+  document Document @relation(fields: [documentId], references: [id], onDelete: Restrict)
+
+  @@index([documentId])
+  @@index([granteeType, granteeValue])
+  @@map("document_access_grants")
+}
+
+/// Registry of credential issuers (councils, boards, universities).
+/// tenantId nullable = curated GLOBAL rows shared by every tenant.
+model IssuingAuthority {
+  id            String        @id @default(cuid())
+  tenantId      String?
+  code          String
+  name          String
+  authorityType AuthorityType
+  jurisdiction  String? // data, not code (ADR-004)
+  website       String?
+  status        LifecycleStatus @default(ACTIVE)
+  createdAt     DateTime      @default(now())
+  createdBy     String?
+  updatedAt     DateTime      @default(now()) @updatedAt
+  updatedBy     String?
+  version       Int           @default(1)
+
+  tenant          Tenant?                          @relation(fields: [tenantId], references: [id])
+  credentials     EmployeeCredential[]
+  qualifications  EmployeeQualification[]          @relation("QualificationAuthority")
+
+  @@unique([tenantId, code])
+  @@index([status])
+  @@map("issuing_authorities")
+}
+
+/// Per-type credential rules as DATA (ADR-004 posture): verification
+/// requirements, expiry semantics, renewal lead time. One row per
+/// (tenant, CredentialType code).
+model CredentialTypeConfig {
+  id                    String          @id @default(cuid())
+  tenantId              String
+  code                  String // matches CredentialType enum values
+  requiresVerification  Boolean         @default(true)
+  requiresExpiry        Boolean         @default(true)
+  defaultValidityMonths Int?
+  renewalLeadDays       Int             @default(60)
+  status                LifecycleStatus @default(ACTIVE)
+  createdAt             DateTime        @default(now())
+  createdBy             String?
+  updatedAt             DateTime        @default(now()) @updatedAt
+  updatedBy             String?
+  version               Int             @default(1)
+
+  tenant Tenant @relation(fields: [tenantId], references: [id])
+
+  @@unique([tenantId, code])
+  @@map("credential_type_configs")
+}
+
+/// The verification ACT, append-only (ADR-011 §3): who verified what, when,
+/// by which method, against which evidence. The EmployeeCredential columns
+/// are the derived CURRENT pointer; these rows are the history.
+model CredentialVerificationRecord {
+  id           String             @id @default(cuid())
+  tenantId     String
+  credentialId String
+  outcome      VerificationOutcome
+  method       VerificationMethod
+  performedBy  String
+  performedAt  DateTime           @default(now())
+  evidenceDocumentId String?      // Documents-domain Document
+  notes        String?
+  reverifyDue  DateTime?          // next re-verification deadline
+  createdAt    DateTime           @default(now())
+  createdBy    String?
+
+  tenant     Tenant             @relation(fields: [tenantId], references: [id])
+  credential EmployeeCredential @relation(fields: [credentialId], references: [id], onDelete: Restrict)
+  evidenceDocument Document?    @relation("CredentialEvidenceDocument", fields: [evidenceDocumentId], references: [id], onDelete: Restrict)
+
+  @@index([credentialId])
+  @@index([outcome])
+  @@map("credential_verification_records")
+}
+
+/// Renewal chain linking a credential to its renewal events (expiry moves
+/// only through renewals; history never overwritten).
+model CredentialRenewal {
+  id                String   @id @default(cuid())
+  tenantId          String
+  credentialId      String
+  priorCredentialId String?
+  newExpiresOn      DateTime
+  renewedAt         DateTime @default(now())
+  documentId        String? // supporting Document
+  notes             String?
+  createdAt         DateTime @default(now())
+  createdBy         String?
+
+  tenant          Tenant             @relation(fields: [tenantId], references: [id])
+  credential      EmployeeCredential @relation(fields: [credentialId], references: [id], onDelete: Restrict)
+
+  @@index([credentialId])
+  @@map("credential_renewals")
+}
+
+/// Qualification verification mirror (lighter: one-shot verification).
+model QualificationVerificationRecord {
+  id              String               @id @default(cuid())
+  tenantId        String
+  qualificationId String
+  outcome         VerificationOutcome
+  method          VerificationMethod
+  performedBy     String
+  performedAt     DateTime             @default(now())
+  evidenceDocumentId String?           // Documents-domain Document
+  notes           String?
+  createdAt       DateTime             @default(now())
+  createdBy       String?
+
+  tenant        Tenant                @relation(fields: [tenantId], references: [id])
+  qualification EmployeeQualification @relation(fields: [qualificationId], references: [id], onDelete: Restrict)
+  evidenceDocument Document?          @relation("QualificationEvidenceDocument", fields: [evidenceDocumentId], references: [id], onDelete: Restrict)
+
+  @@index([qualificationId])
+  @@index([outcome])
+  @@map("qualification_verification_records")
+}

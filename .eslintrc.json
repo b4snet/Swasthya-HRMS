@@ -1,0 +1,56 @@
+{
+  "extends": ["next/core-web-vitals", "next/typescript"],
+  "rules": {
+    "@typescript-eslint/no-unused-vars": [
+      "error",
+      { "argsIgnorePattern": "^_", "varsIgnorePattern": "^_" }
+    ],
+    "no-restricted-imports": [
+      "error",
+      {
+        "patterns": [
+          {
+            "group": ["@/app/*"],
+            "message": "Domain and UI code must not import from route handlers (app layer imports them, not the reverse)."
+          },
+          {
+            "group": ["@/modules/*/api/*", "!@/modules/*/api/actions", "!@/modules/*/api/queries"],
+            "message": "Import domain services, not route modules. Server actions (api/actions, api/queries) are the sanctioned UI boundary."
+          }
+        ]
+      }
+    ]
+  },
+  "overrides": [
+    {
+      "files": [
+        "src/components/ui/**/*.ts",
+        "src/components/ui/**/*.tsx",
+        "src/app/**/*-client.tsx",
+        "src/app/**/*-client.ts"
+      ],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          {
+            "patterns": [
+              {
+                "group": ["@/app/*"],
+                "message": "Client code must not import from route handlers."
+              },
+              {
+                "group": [
+                  "@/modules/*/service/*",
+                  "@/modules/*/domain/*",
+                  "@/lib/db",
+                  "@/lib/db.ts"
+                ],
+                "message": "Client components go through the api layer (server actions); services and domain are server-side."
+              }
+            ]
+          }
+        ]
+      }
+    }
+  ]
+}
