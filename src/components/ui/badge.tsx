@@ -12,6 +12,8 @@ const badgeVariants = cva(
         warning: "border-warning-border bg-warning-surface text-warning",
         destructive: "border-destructive-border bg-destructive-surface text-destructive",
         info: "border-info-border bg-info-surface text-info",
+        outline: "border-border bg-background text-foreground",
+        primary: "border-primary bg-primary text-primary-foreground",
       },
     },
     defaultVariants: { variant: "neutral" },

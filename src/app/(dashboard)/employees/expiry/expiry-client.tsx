@@ -1,7 +1,10 @@
 "use client";
 
+import { CalendarClock, FileWarning, ShieldAlert, ShieldCheck } from "lucide-react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { PageHeader } from "@/components/layout/page-header";
+import { StatCard } from "@/components/ui/stat-card";
 
 function fmtDate(d: string | null): string {
   if (!d) return "—";
@@ -42,8 +45,44 @@ export function ExpiryClient({
   contractRows: ContractRow[];
   credentialRows: CredentialRow[];
 }) {
+  const expiredContracts = contractRows.filter((c) => c.status === "EXPIRED").length;
+  const expiredCredentials = credentialRows.filter((c) => c.derivedStatus === "EXPIRED").length;
+
   return (
     <div className="space-y-6">
+      <PageHeader
+        icon={CalendarClock}
+        title="Expiring & expired"
+        description="Contracts and credentials inside their renewal windows or already expired, within your reach."
+      />
+
+      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        <StatCard
+          label="Contracts expiring"
+          value={contractRows.length - expiredContracts}
+          icon={FileWarning}
+          tone="warning"
+        />
+        <StatCard
+          label="Contracts expired"
+          value={expiredContracts}
+          icon={ShieldAlert}
+          tone="destructive"
+        />
+        <StatCard
+          label="Credentials expiring"
+          value={credentialRows.length - expiredCredentials}
+          icon={ShieldCheck}
+          tone="warning"
+        />
+        <StatCard
+          label="Credentials expired"
+          value={expiredCredentials}
+          icon={ShieldAlert}
+          tone="destructive"
+        />
+      </div>
+
       <Card>
         <CardHeader>
           <CardTitle>Expiring &amp; expired contracts</CardTitle>

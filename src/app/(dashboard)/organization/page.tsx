@@ -1,5 +1,16 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import {
+  Banknote,
+  Building2,
+  Layers,
+  LayoutGrid,
+  Network,
+  Tag,
+  UserSquare2,
+  Waypoints,
+  type LucideIcon,
+} from "lucide-react";
 import { requireUser } from "@/lib/auth/session";
 import { callerFromUser } from "@/modules/organization/service/caller";
 import {
@@ -10,6 +21,8 @@ import {
 import { EmptyState, ErrorState, PermissionDeniedState } from "@/components/ui/states";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge, statusVariant } from "@/components/ui/badge";
+import { PageHeader } from "@/components/layout/page-header";
+import { StatCard } from "@/components/ui/stat-card";
 
 export const metadata: Metadata = { title: "Organization" };
 
@@ -17,15 +30,16 @@ const COUNT_LINKS: Array<{
   key: keyof Awaited<ReturnType<typeof getStructureView>>["counts"];
   href: string;
   label: string;
+  icon: LucideIcon;
 }> = [
-  { key: "orgUnits", href: "/organization/structure", label: "Org units" },
-  { key: "departments", href: "/organization/departments", label: "Departments" },
-  { key: "teams", href: "/organization/teams", label: "Teams" },
-  { key: "positions", href: "/organization/positions", label: "Positions" },
-  { key: "designations", href: "/organization/designations", label: "Designations" },
-  { key: "jobFamilies", href: "/organization/job-families", label: "Job families" },
-  { key: "grades", href: "/organization/grades", label: "Grades" },
-  { key: "costCenters", href: "/organization/facilities", label: "Facilities & cost centers" },
+  { key: "orgUnits", href: "/organization/structure", label: "Org units", icon: LayoutGrid },
+  { key: "departments", href: "/organization/departments", label: "Departments", icon: Layers },
+  { key: "teams", href: "/organization/teams", label: "Teams", icon: Network },
+  { key: "positions", href: "/organization/positions", label: "Positions", icon: UserSquare2 },
+  { key: "designations", href: "/organization/designations", label: "Designations", icon: Tag },
+  { key: "jobFamilies", href: "/organization/job-families", label: "Job families", icon: Waypoints },
+  { key: "grades", href: "/organization/grades", label: "Grades", icon: Banknote },
+  { key: "costCenters", href: "/organization/facilities", label: "Facilities & cost centers", icon: Building2 },
 ];
 
 export default async function OrganizationOverviewPage() {
@@ -66,33 +80,36 @@ export default async function OrganizationOverviewPage() {
   }
 
   return (
-    <div className="space-y-6">
+    <div className="mx-auto w-full max-w-7xl space-y-6 px-4 py-6 lg:px-6">
+      <PageHeader
+        icon={Building2}
+        title="Organization"
+        description={`${active.name} (${active.code}) at a glance — structure, facilities and entities in your scope.`}
+      />
+
       <section aria-labelledby="org-entities-heading" className="space-y-3">
         <h2 id="org-entities-heading" className="text-sm font-semibold">
-          {active.name} at a glance
+          Structure
         </h2>
-        <ul className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
+        <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 xl:grid-cols-5">
           {COUNT_LINKS.map((item) => (
-            <li key={item.key}>
-              <Link
-                href={item.href}
-                className="block rounded-lg border border-border bg-background p-4 hover:bg-muted focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
-              >
-                <p className="text-2xl font-bold tabular-nums">{view.counts[item.key]}</p>
-                <p className="mt-1 text-2xs text-muted-foreground">{item.label}</p>
-              </Link>
-            </li>
+            <StatCard
+              key={item.key}
+              label={item.label}
+              value={view.counts[item.key]}
+              icon={item.icon}
+              tone="primary"
+              href={item.href}
+            />
           ))}
-          <li>
-            <Link
-              href="/organization/structure"
-              className="block rounded-lg border border-border bg-background p-4 hover:bg-muted focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
-            >
-              <p className="text-2xl font-bold tabular-nums">{view.counts.reportingEdges}</p>
-              <p className="mt-1 text-2xs text-muted-foreground">Reporting relationships</p>
-            </Link>
-          </li>
-        </ul>
+          <StatCard
+            label="Reporting relationships"
+            value={view.counts.reportingEdges}
+            icon={Network}
+            tone="info"
+            href="/organization/structure"
+          />
+        </div>
       </section>
 
       <section aria-labelledby="org-facilities-heading" className="space-y-3">
@@ -138,12 +155,17 @@ export default async function OrganizationOverviewPage() {
         <h2 id="org-orgs-heading" className="text-sm font-semibold">
           Organizations in your scope
         </h2>
-        <ul className="divide-y divide-border rounded-lg border border-border bg-background">
+        <ul className="divide-y divide-border overflow-hidden rounded-xl border border-border bg-background shadow-card">
           {orgs.map((o) => (
             <li key={o.id} className="flex items-center justify-between gap-3 px-4 py-3">
               <div>
                 <p className="text-sm font-medium">
-                  {o.name} {o.id === active.id ? <span className="sr-only">(active)</span> : null}
+                  {o.name}{" "}
+                  {o.id === active.id ? (
+                    <Badge variant="primary" className="ml-1.5 align-middle">
+                      Active
+                    </Badge>
+                  ) : null}
                 </p>
                 <p className="text-2xs text-muted-foreground">
                   <code>{o.code}</code>

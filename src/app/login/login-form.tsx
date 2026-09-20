@@ -52,7 +52,7 @@ export function LoginForm() {
           <ErrorState title={error.title} message={error.message} />
         </div>
       ) : null}
-      <div className="space-y-4 rounded-lg border border-border bg-background p-6">
+      <div className="space-y-5">
         <div>
           <Label htmlFor="email">Email</Label>
           <Input

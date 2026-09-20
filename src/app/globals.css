@@ -2,11 +2,42 @@
 @tailwind components;
 @tailwind utilities;
 
-/* WCAG 2.2 AA: always-visible focus indicator, never removed globally */
 @layer base {
+  /* WCAG 2.2 AA: always-visible focus indicator, never removed globally */
   :focus-visible {
     outline: 2px solid theme("colors.ring");
     outline-offset: 2px;
+  }
+
+  html {
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+
+  body {
+    background-color: theme("colors.canvas");
+    color: theme("colors.foreground");
+  }
+
+  ::selection {
+    background-color: rgb(15 110 99 / 0.18);
+  }
+
+  /* Subtle themed scrollbars (webkit) */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: theme("colors.input") transparent;
+  }
+  ::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+  ::-webkit-scrollbar-thumb {
+    background-color: theme("colors.input");
+    border-radius: 9999px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
   }
 
   /* Respect user motion preferences */

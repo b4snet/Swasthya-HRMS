@@ -96,6 +96,54 @@ export async function listEmployeesInReachAction(organizationId: string) {
   return scoped(organizationId, (c) => listEmployeesInReach(c, organizationId));
 }
 
+export interface EmployeeSearchHit {
+  id: string;
+  employeeNo: string;
+  name: string;
+  organizationId: string;
+  organizationName: string;
+  href: string;
+}
+
+/**
+ * Global command-palette search: matches by name or employee number across
+ * the organizations the caller may read. Reach is computed server-side for
+ * each organization; a guessed id never widens results.
+ */
+export async function searchEmployeesAction(query: string): Promise<QueryResult<EmployeeSearchHit[]>> {
+  const c = await caller();
+  if (!c) return deny();
+  const q = query.trim().toLowerCase();
+  if (!q) return { ok: true, data: [] };
+  try {
+    const orgs = await listAccessibleOrganizations(c);
+    const hits: EmployeeSearchHit[] = [];
+    for (const org of orgs) {
+      const rows = await listEmployeesInReach(c, org.id);
+      for (const row of rows) {
+        const name = [row.firstName, row.lastName].filter(Boolean).join(" ").trim();
+        const lowerName = name.toLowerCase();
+        const lowerNo = row.employeeNo.toLowerCase();
+        if (lowerNo.includes(q) || lowerName.includes(q)) {
+          hits.push({
+            id: row.id,
+            employeeNo: row.employeeNo,
+            name: name || "Unnamed employee",
+            organizationId: org.id,
+            organizationName: org.name,
+            href: `/employees/${row.id}`,
+          });
+          if (hits.length >= 8) break;
+        }
+      }
+      if (hits.length >= 8) break;
+    }
+    return { ok: true, data: hits };
+  } catch (err) {
+    return fail(err);
+  }
+}
+
 /**
  * Manager-scoped detail read (IDOR-sensitive): the service returns
  * NOT_FOUND when the employee is outside the caller's derived reach —
