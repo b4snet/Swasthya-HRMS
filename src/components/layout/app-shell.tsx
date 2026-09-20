@@ -54,7 +54,7 @@ export function AppShell({ children, sections, alerts, user }: AppShellProps) {
       <div className="flex min-h-screen">
         <aside
           aria-label="Primary"
-          className="hidden h-screen w-72 shrink-0 border-r border-sidebar-active bg-sidebar lg:sticky lg:top-0 lg:block"
+          className="hidden h-screen w-60 shrink-0 border-r border-sidebar-active bg-sidebar lg:sticky lg:top-0 lg:block"
         >
           <Sidebar sections={sections} user={user} />
         </aside>
@@ -67,7 +67,7 @@ export function AppShell({ children, sections, alerts, user }: AppShellProps) {
               onClick={() => setMobileOpen(false)}
               className="absolute inset-0 bg-black/45 backdrop-blur-[2px] animate-fade-in"
             />
-            <div className="absolute inset-y-0 left-0 w-72 max-w-[85vw] bg-sidebar shadow-dialog animate-slide-in-right">
+            <div className="absolute inset-y-0 left-0 w-60 max-w-[85vw] bg-sidebar shadow-dialog animate-slide-in-right">
               <button
                 type="button"
                 aria-label="Close navigation"
