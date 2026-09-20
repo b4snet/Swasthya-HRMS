@@ -115,7 +115,7 @@ export function AppShell({ children, sections, alerts, user }: AppShellProps) {
             </div>
           </header>
 
-          <main id="main-content" className="flex-1">
+          <main id="main-content" className="flex-1 px-4 py-6 lg:px-6">
             {children}
           </main>
         </div>

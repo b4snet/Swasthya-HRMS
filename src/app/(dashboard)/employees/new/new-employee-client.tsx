@@ -308,7 +308,15 @@ export function NewEmployeeClient({ organizationId }: { organizationId: string }
   }
 
   return (
-    <div className="mx-auto max-w-3xl space-y-6">
+    <div className="mx-auto w-full max-w-3xl space-y-6">
+      <header className="space-y-1">
+        <p className="text-2xs font-semibold uppercase tracking-wide text-primary">Workforce</p>
+        <h2 className="text-xl font-bold tracking-tight">Create employee</h2>
+        <p className="text-sm text-muted-foreground">
+          Enter identity, employment and initial assignment details. Records are saved within your
+          access reach and audit-logged.
+        </p>
+      </header>
       <ol className="flex flex-wrap gap-2 text-2xs" aria-label="Progress">
         {[
           [1, "Identity"],

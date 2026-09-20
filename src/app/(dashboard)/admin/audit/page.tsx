@@ -2,51 +2,13 @@ import type { Metadata } from "next";
 import { requirePermission } from "@/lib/auth/session";
 import { PERMISSIONS } from "@/lib/auth/rbac";
 import { prisma } from "@/lib/db";
-import { formatDate } from "@/lib/utils";
 import { Badge, statusVariant } from "@/components/ui/badge";
 import { Breadcrumbs } from "@/components/ui/breadcrumb";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { DataTable, type Column } from "@/components/ui/data-table";
 import { EmptyState, PermissionDeniedState } from "@/components/ui/states";
-import { truncate } from "@/lib/utils";
+import { AuditTable, type AuditEventRow } from "./audit-table";
 
 export const metadata: Metadata = { title: "Audit log" };
-
-interface AuditRow {
-  id: string;
-  action: string;
-  resourceType: string;
-  actorEmail: string | null;
-  occurredAt: string;
-  ip: string | null;
-}
-
-const columns: Array<Column<AuditRow>> = [
-  {
-    key: "occurredAt",
-    header: "When",
-    sortable: true,
-    render: (row) => <span className="whitespace-nowrap">{formatDate(row.occurredAt)}</span>,
-  },
-  {
-    key: "action",
-    header: "Action",
-    sortable: true,
-    render: (r) => <code className="text-2xs">{r.action}</code>,
-  },
-  { key: "resourceType", header: "Resource", sortable: true },
-  {
-    key: "actorEmail",
-    header: "Actor",
-    sortable: true,
-    render: (r) => truncate(r.actorEmail ?? "system", 40),
-  },
-  {
-    key: "ip",
-    header: "IP",
-    render: (r) => <span className="font-mono text-2xs">{r.ip ?? "—"}</span>,
-  },
-];
 
 export default async function AuditPage() {
   const all = await requirePermission(PERMISSIONS.AUDIT_READ_ALL);
@@ -65,7 +27,7 @@ export default async function AuditPage() {
     take: 100,
   });
 
-  const rows: AuditRow[] = events.map((e) => ({
+  const rows: AuditEventRow[] = events.map((e) => ({
     id: e.id,
     action: e.action,
     resourceType: e.resourceType,
@@ -112,16 +74,7 @@ export default async function AuditPage() {
               }
             />
           ) : (
-            <DataTable
-              caption="Audit events"
-              columns={columns}
-              rows={rows}
-              getRowKey={(r) => r.id}
-              getSortValue={(r, key) =>
-                key === "occurredAt" ? r.occurredAt : String(r[key as keyof AuditRow] ?? "")
-              }
-              emptyState={<EmptyState title="No events" />}
-            />
+            <AuditTable rows={rows} />
           )}
         </CardContent>
       </Card>

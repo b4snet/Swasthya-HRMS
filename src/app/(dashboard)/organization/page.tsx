@@ -80,7 +80,7 @@ export default async function OrganizationOverviewPage() {
   }
 
   return (
-    <div className="mx-auto w-full max-w-7xl space-y-6 px-4 py-6 lg:px-6">
+    <div className="mx-auto w-full max-w-7xl space-y-6">
       <PageHeader
         icon={Building2}
         title="Organization"
