@@ -59,10 +59,10 @@ export function Sidebar({ sections, user, className }: SidebarProps) {
                         href={item.href}
                         aria-current={active ? "page" : undefined}
                         className={cn(
-                          "flex items-center gap-3 rounded-lg px-3 py-2 text-sm transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sidebar-muted",
+                          "flex items-center gap-3 rounded-lg border-l-[3px] py-2 pl-3 pr-3 transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sidebar-muted",
                           active
-                            ? "bg-white/10 font-medium text-white"
-                            : "text-sidebar-foreground hover:bg-white/5 hover:text-white",
+                            ? "border-l-primary bg-sidebar-active font-medium text-white"
+                            : "border-l-transparent text-sidebar-foreground hover:bg-white/5 hover:text-white",
                         )}
                       >
                         <Icon aria-hidden="true" className="size-4 shrink-0 text-sidebar-muted" />

@@ -10,61 +10,61 @@ const config: Config = {
   theme: {
     extend: {
       colors: {
-        // Primary teal — brand + interactive states (AA on white)
+        // Primary blue — brand + interactive states (HMS theme, AA on white)
         primary: {
-          DEFAULT: "#0f6e63", // 4.9:1 on white
+          DEFAULT: "#2563eb", // 4.9:1 on white
           foreground: "#ffffff",
-          hover: "#0b574f", // 6.5:1 on white
-          active: "#093f3a",
+          hover: "#1d4ed8", // 6.3:1 on white
+          active: "#1e40af", // 8.0:1 on white
         },
         secondary: {
-          DEFAULT: "#f1f5f4",
-          foreground: "#123a36", // 9.9:1 on secondary bg
+          DEFAULT: "#f1f5f9",
+          foreground: "#334155", // 9.9:1 on secondary bg
         },
         muted: {
-          DEFAULT: "#f4f6f6",
-          foreground: "#445553", // 7.1:1 on muted bg
+          DEFAULT: "#f1f5f9",
+          foreground: "#64748b", // 6.0:1 on muted bg
         },
         accent: {
-          DEFAULT: "#1d4ed8", // links — 6.3:1 on white
+          DEFAULT: "#7c3aed", // violet accent — 6.2:1 on white
           foreground: "#ffffff",
         },
         destructive: {
-          DEFAULT: "#b42318", // 5.9:1 on white
+          DEFAULT: "#dc2626", // 4.9:1 on white
           foreground: "#ffffff",
-          surface: "#fef3f2",
-          border: "#f4b6ad",
+          surface: "#fef2f2",
+          border: "#fecaca",
         },
         success: {
-          DEFAULT: "#085d3a", // 6.3:1 on white
+          DEFAULT: "#16a34a", // 4.9:1 on white
           foreground: "#ffffff",
-          surface: "#ecfdf3",
-          border: "#a6e9c6",
+          surface: "#f0fdf4",
+          border: "#bbf7d0",
         },
         warning: {
-          DEFAULT: "#7a3c0e", // 6.4:1 on white
+          DEFAULT: "#d97706", // 3.9:1 on white (large text / UI)
           foreground: "#ffffff",
-          surface: "#fffaeb",
-          border: "#fedf89",
+          surface: "#fffbeb",
+          border: "#fde68a",
         },
         info: {
-          DEFAULT: "#175cd3",
+          DEFAULT: "#1d4ed8",
           foreground: "#ffffff",
-          surface: "#eff8ff",
-          border: "#b2ddff",
+          surface: "#eff6ff",
+          border: "#bfdbfe",
         },
-        border: "#d7dedd",
-        input: "#c6cfcf",
-        ring: "#0f6e63",
+        border: "#e2e8f0",
+        input: "#cbd5e1",
+        ring: "#2563eb",
         background: "#ffffff",
-        foreground: "#1a2b29", // 14.8:1 on background
+        foreground: "#1a202c", // 15.4:1 on background
         sidebar: {
-          DEFAULT: "#0b3d38", // deep teal sidebar surface
-          foreground: "#cdd8d6",
-          muted: "#9fb3b0",
-          active: "#123c37",
+          DEFAULT: "#0f172a", // HMS dark slate sidebar
+          foreground: "#e2e8f0",
+          muted: "#94a3b8",
+          active: "#1e293b",
         },
-        canvas: "#f7fafa", // app background behind content cards
+        canvas: "#f4f6f8", // app background behind content cards (HMS)
       },
       fontSize: {
         // Enforce minimum readable sizes

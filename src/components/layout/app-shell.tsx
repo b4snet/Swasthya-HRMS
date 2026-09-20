@@ -54,7 +54,7 @@ export function AppShell({ children, sections, alerts, user }: AppShellProps) {
       <div className="flex min-h-screen">
         <aside
           aria-label="Primary"
-          className="hidden h-screen w-72 shrink-0 border-r border-black/5 bg-sidebar lg:sticky lg:top-0 lg:block"
+          className="hidden h-screen w-72 shrink-0 border-r border-sidebar-active bg-sidebar lg:sticky lg:top-0 lg:block"
         >
           <Sidebar sections={sections} user={user} />
         </aside>
