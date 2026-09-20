@@ -200,6 +200,10 @@ model User {
   sessions     Session[]
   auditEvents  AuditEvent[]      @relation("AuditActor")
   accessScopes UserAccessScope[]
+  notifications        AppNotification[] @relation("NotificationRecipient")
+  assignedTasks        WorkflowTask[]    @relation("TaskAssignee")
+  approvalRequests     ApprovalRequest[] @relation("ApprovalRequester")
+  approvalsDecided     ApprovalRequest[] @relation("ApprovalApprover")
 
   @@unique([tenantId, email])
   @@index([status])
@@ -1598,4 +1602,139 @@ model QualificationVerificationRecord {
   @@index([qualificationId])
   @@index([outcome])
   @@map("qualification_verification_records")
+}
+
+// ── Workflow, tasks & approvals (Phase 0 hardening; Slice 1.0) ───────────────
+//
+// Reusable workflow primitives (brief §55). Domains (leave, transfer,
+// separation, onboarding…) attach via sourceType/sourceId and drive their own
+// state internals without each inventing a task/approval stack. Tasks and
+// approvals are tenant-scoped, optionally org-scoped; history is append-only
+// via AuditEvent alongside each transition.
+
+enum WorkflowSourceType {
+  EMPLOYEE
+  POSITION
+  CONTRACT
+  CREDENTIAL
+  LEAVE_REQUEST
+  ONBOARDING
+  SEPARATION
+  TRANSFER
+  PROMOTION
+}
+
+enum WorkflowTaskStatus {
+  PENDING
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+}
+
+enum WorkflowTaskPriority {
+  LOW
+  MEDIUM
+  HIGH
+  URGENT
+}
+
+enum ApprovalStatus {
+  REQUESTED
+  PENDING
+  APPROVED
+  REJECTED
+  CANCELLED
+}
+
+/// A discrete unit of work assigned to a user (created by workflow/domain
+/// services; never by raw client input).
+model WorkflowTask {
+  id              String              @id @default(cuid())
+  tenantId        String
+  organizationId  String?
+  taskType        String // namespaced, e.g. "onboarding.document", "separation.clearance"
+  subject         String
+  description     String?
+  priority        WorkflowTaskPriority @default(MEDIUM)
+  status          WorkflowTaskStatus  @default(PENDING)
+  assigneeUserId  String?
+  sourceType      WorkflowSourceType?
+  sourceId        String?
+  dueDate         DateTime?
+  completedAt     DateTime?
+  completedBy     String?
+  cancelledAt     DateTime?
+  cancelledBy     String?
+  createdAt       DateTime            @default(now())
+  createdBy       String?
+  updatedAt       DateTime            @default(now()) @updatedAt
+  updatedBy       String?
+  version         Int                 @default(1)
+
+  assignee User? @relation("TaskAssignee", fields: [assigneeUserId], references: [id])
+
+  @@index([tenantId, status])
+  @@index([assigneeUserId, status])
+  @@index([sourceType, sourceId])
+  @@map("workflow_tasks")
+}
+
+/// A decision awaiting an owner (created by domain services). Every decision
+/// transition writes an AuditEvent.
+model ApprovalRequest {
+  id              String         @id @default(cuid())
+  tenantId        String
+  organizationId  String?
+  requestType     String // namespaced, e.g. "leave.request", "transfer.request"
+  subject         String
+  rationale       String?
+  status          ApprovalStatus @default(REQUESTED)
+  requesterUserId String?
+  approverUserId  String? // resolved escalation owner (may be null → queue)
+  approverName    String?
+  sourceType      WorkflowSourceType?
+  sourceId        String?
+  requestedAt     DateTime       @default(now())
+  decidedAt       DateTime?
+  decidedBy       String?
+  decisionNote    String?
+  createdAt       DateTime       @default(now())
+  createdBy       String?
+  updatedAt       DateTime       @default(now()) @updatedAt
+  updatedBy       String?
+  version         Int            @default(1)
+
+  requester User? @relation("ApprovalRequester", fields: [requesterUserId], references: [id])
+  approver  User? @relation("ApprovalApprover", fields: [approverUserId], references: [id])
+
+  @@index([tenantId, status])
+  @@index([approverUserId, status])
+  @@index([sourceType, sourceId])
+  @@map("approval_requests")
+}
+
+/// Durable in-app notification (brief §89). Never derived from ephemeral UI
+/// state; readAt marks consumption without deleting history.
+model AppNotification {
+  id               String              @id @default(cuid())
+  tenantId         String
+  organizationId   String?
+  recipientUserId  String
+  notificationType String // namespaced, e.g. "credential.expiry", "leave.decision"
+  title            String
+  message          String?
+  href             String? // in-app destination
+  entityType       WorkflowSourceType?
+  entityId         String?
+  readAt           DateTime?
+  createdAt        DateTime            @default(now())
+  createdBy        String?
+
+  recipient User @relation("NotificationRecipient", fields: [recipientUserId], references: [id])
+
+  @@index([recipientUserId, readAt])
+  @@index([recipientUserId, createdAt])
+  @@index([tenantId, notificationType])
+  @@index([entityType, entityId])
+  @@map("app_notifications")
 }

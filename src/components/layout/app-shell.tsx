@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { Menu, Search, X } from "lucide-react";
 import { AlertsDropdown } from "./alerts-dropdown";
+import { NotificationsDropdown } from "@/modules/notifications/components/notifications-dropdown";
 import { CommandPalette } from "./command-palette";
 import { Sidebar } from "./sidebar";
 import { UserMenu } from "./user-menu";
@@ -111,6 +112,7 @@ export function AppShell({ children, sections, alerts, user }: AppShellProps) {
 
             <div className="flex items-center gap-2.5">
               <AlertsDropdown alerts={alerts} />
+              <NotificationsDropdown />
               <UserMenu user={user} />
             </div>
           </header>

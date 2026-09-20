@@ -24,6 +24,12 @@ export async function resetDatabase(): Promise<void> {
     prisma.authEvent.deleteMany(),
     prisma.session.deleteMany(),
     prisma.userAccessScope.deleteMany(),
+    // Slice 1.0 (workflows + notifications) — app_notifications restrict on
+    // user (RESTRICT FK), so it must clear before user.deleteMany(); task and
+    // approval FKs are SET NULL so they clear safely after.
+    prisma.appNotification.deleteMany(),
+    prisma.workflowTask.deleteMany(),
+    prisma.approvalRequest.deleteMany(),
     // Phase 3 (contracts/documents/credentials) — children before the rows
     // they reference (all FKs are Restrict). Documents sit UNDER contracts,
     // template bodies, evidence records and employee document references, so
